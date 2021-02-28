@@ -1,7 +1,8 @@
 # xh
 [![Version info](https://img.shields.io/crates/v/xh.svg)](https://crates.io/crates/xh)
 
-Yet another [HTTPie](https://httpie.io/) clone in Rust.
+xh is a friendly and fast tool for sending HTTP requests. It reimplements as much
+as possible of [HTTPie's](https://httpie.io/) excellent design.
 
 [![asciicast](/assets/xh-demo.gif)](https://asciinema.org/a/390748)
 
@@ -26,7 +27,7 @@ pacman -S xh
 The [release page](https://github.com/ducaale/xh/releases) contains prebuilt binaries for Linux, macOS and Windows.
 
 ### From source
-Make sure that you have Rust 1.46 or later installed.
+Make sure that you have Rust 1.45 or later installed.
 
 ```
 cargo install xh
@@ -34,41 +35,49 @@ cargo install xh
 
 ## Usage
 ```
-xh 0.7.0
 USAGE:
-    xh [FLAGS] [OPTIONS] <[METHOD] URL> [REQUEST_ITEM]...
+    xh [FLAGS] [OPTIONS] <[METHOD] URL> [--] [REQUEST_ITEM]...
 
 FLAGS:
         --offline         Construct HTTP requests without sending them anywhere
-    -j, --json            (default) Data items from the command line are serialized as a JSON object
-    -f, --form            Data items from the command line are serialized as form fields
-    -m, --multipart       Similar to --form, but always sends a multipart/form-data request (i.e., even without files)
+    -j, --json            (default) Serialize data items from the command line as a JSON object
+    -f, --form            Serialize data items from the command line as form fields
+    -m, --multipart       Like --form, but force a multipart/form-data request even without files
     -I, --ignore-stdin    Do not attempt to read stdin
     -F, --follow          Do follow redirects
-    -d, --download
+    -d, --download        Download the body to a file instead of printing it
     -h, --headers         Print only the response headers, shortcut for --print=h
     -b, --body            Print only the response body, Shortcut for --print=b
-    -c, --continue        Resume an interrupted download
+    -c, --continue        Resume an interrupted download. Requires --download and --output
     -v, --verbose         Print the whole request as well as the response
     -q, --quiet           Do not print to stdout or stderr
     -S, --stream          Always stream the response body
+        --check-status    Exit with an error status code if the server replies with an error
+        --curl            Print a translation to a `curl` command
+        --curl-long       Use the long versions of curl's flags
+        --https           Make HTTPS requests if not specified in the URL
         --help            Prints help information
     -V, --version         Prints version information
 
 OPTIONS:
-    -A, --auth-type <auth-type>              Specify the auth mechanism [possible values: Basic, Bearer]
-    -a, --auth <auth>
-    -o, --output <output>                    Save output to FILE instead of stdout
-        --max-redirects <max-redirects>      Number of redirects to follow, only respected if `follow` is set
-    -p, --print <print>                      String specifying what the output should contain
-        --pretty <pretty>                    Controls output processing [possible values: All, Colors, Format, None]
-    -s, --style <theme>                      Output coloring style [possible values: Auto, Solarized]
-        --default-scheme <default-scheme>    The default scheme to use if not specified in the URL
+    -a, --auth <USER[:PASS]>         Authenticate as USER with PASS. PASS will be prompted if missing
+        --bearer <TOKEN>             Authenticate with a bearer token
+    -o, --output <FILE>              Save output to FILE instead of stdout
+        --max-redirects <NUM>        Number of redirects to follow, only respected if `follow` is set
+    -p, --print <FORMAT>             String specifying what the output should contain
+        --pretty <STYLE>             Controls output processing [possible values: all, colors, format, none]
+    -s, --style <THEME>              Output coloring style [possible values: auto, solarized]
+        --proxy <PROTOCOL:URL>...    Use a proxy for a protocol. For example: `--proxy https:http://proxy.host:8080`
+        --verify <VERIFY>            If "no", skip SSL verification. If a file path, use it as a CA bundle
+        --cert <FILE>                Use a client side certificate for SSL
+        --cert-key <FILE>            A private key file to use with --cert
 
 ARGS:
     <[METHOD] URL>       The request URL, preceded by an optional HTTP method
     <REQUEST_ITEM>...    Optional key-value pairs to be included in the request
 ```
+
+Run `xh help` for more detailed information.
 
 ## Request Items
 

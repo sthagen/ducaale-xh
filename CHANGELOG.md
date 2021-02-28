@@ -1,3 +1,33 @@
+## [0.8.0] - 2021-02-28
+### Features
+- More robust detection of the method and URL arguments, see #55 (@blyxxyz)
+- Improvements to the generation downloaded filenames, see #56 (@blyxxyz)
+- _--continue_ now works for resuming downloads. It was incomplete before, see #59 (@blyxxyz)
+- _--check-status_ is supported, and is automatically active for downloads
+  (so you don't download error pages), see #59 (@blyxxyz)
+- Add the _--proxy_ option, see #62 (@otaconix)
+- Add _--bearer_ flag for Bearer Authentication and remove _--auth-type_, see #64 (@blyxxyz)
+- Add support for manpages, see #64 (@blyxxyz)
+- Add _help_ subcommand for printing long help and update _--help_ to print short help, see #64 (@blyxxyz)
+- Support escaping characters in request items with backslash, see #66 (@blyxxyz)
+- Add support for _--verify_ to skip the host’s SSL certificate verification, see #44 (@jihchi, @otaconix)
+- Add support for _--cert/cert-key_ for using client side certificate for the SSL communication, see #44 (@jihchi, @otaconix)
+- Add _--curl_ flag to print equivalent curl command, see #69 (@blyxxyz)
+- Replace _--default-scheme_ by _--https_. _--default-scheme_ is still kept as an undocumented flag, see #73 (@blyxxyz)
+- If `xh` is invoked as `xhs`, `https`, or `xhttps`, run as if _--https_ was used, see #73 (@blyxxyz)
+- Support `NO_COLOR` environment variable to turn colors off by default, see #73 (@blyxxyz)
+- Make _--json_/_--form_/_--multipart_ override each other and force content-type. If you use multiple of those flags,
+  all but the last will be ignored. And if you use them without request items the appropriate headers will still be set,
+  see #73 (@blyxxyz)
+- Try to detect undeclared JSON response bodies: If the response is javascript or plain text,
+  check if it's JSON, see #73 (@blyxxyz)
+- Add shell autocompletion generation, see #76 (@blyxxyz)
+
+### Other
+- Make structopt usage more consistent, see #67 (@blyxxyz)
+- Remove use of async, make --stream work consistently, see #41 (@blyxxyz)
+- Introduce clippy and fmt in CI, see #75 (@ducaale)
+
 ## [0.7.0] - 2021-02-12
 ### Features
 - Follow redirects if downloading a file, see #51 (@blyxxyz)

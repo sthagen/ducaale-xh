@@ -1,27 +1,33 @@
+// Would be slightly cleaner to return a ParseError, but reqwest doesn't
+// export that type
 use anyhow::Result;
-use regex::Regex;
+use reqwest::Url;
 
-pub struct Url(pub reqwest::Url);
+use crate::regex;
 
-impl Url {
-    pub fn new(url: String, default_scheme: Option<String>) -> Result<Url> {
-        lazy_static::lazy_static! {
-            static ref RE: Regex = Regex::new("[a-zA-Z]://.+").unwrap();
+pub fn construct_url(
+    url: &str,
+    default_scheme: Option<&str>,
+    query: Vec<(&str, &str)>,
+) -> Result<Url> {
+    let mut default_scheme = default_scheme.unwrap_or("http://").to_string();
+    if !default_scheme.ends_with("://") {
+        default_scheme.push_str("://");
+    }
+    let mut url: Url = if url.starts_with(':') {
+        format!("{}{}{}", default_scheme, "localhost", url).parse()?
+    } else if !regex!("[a-zA-Z0-9]://.+").is_match(&url) {
+        format!("{}{}", default_scheme, url).parse()?
+    } else {
+        url.parse()?
+    };
+    if !query.is_empty() {
+        // If we run this even without adding pairs it adds a `?`, hence
+        // the .is_empty() check
+        let mut pairs = url.query_pairs_mut();
+        for (name, value) in query {
+            pairs.append_pair(name, value);
         }
-
-        let default_scheme = default_scheme.as_deref().unwrap_or("http://");
-        Ok(if url.starts_with(':') {
-            let url = format!("{}{}{}", default_scheme, "localhost", url);
-            Url(reqwest::Url::parse(&url)?)
-        } else if !RE.is_match(&url) {
-            let url = format!("{}{}", default_scheme, url);
-            Url(reqwest::Url::parse(&url)?)
-        } else {
-            Url(reqwest::Url::parse(&url)?)
-        })
     }
-
-    pub fn host(&self) -> Option<String> {
-        self.0.host().map(|host| host.to_string())
-    }
+    Ok(url)
 }

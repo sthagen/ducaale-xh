@@ -1,113 +1,198 @@
-use std::env;
-
-use atty::Stream;
-use reqwest::header::{
-    HeaderValue, ACCEPT, ACCEPT_ENCODING, CONNECTION, CONTENT_TYPE, RANGE, USER_AGENT,
-};
-use reqwest::{Client, StatusCode};
-
 mod auth;
 mod buffer;
 mod cli;
 mod download;
+mod formatting;
 mod printer;
 mod request_items;
+mod to_curl;
 mod url;
 mod utils;
+mod vendored;
 
-use anyhow::{anyhow, Result};
-use auth::Auth;
-use buffer::Buffer;
-use cli::{AuthType, Cli, Method, Pretty, Print, RequestItem, Theme};
-use download::{download_file, get_file_size};
-use printer::Printer;
-use request_items::{Body, RequestItems};
+use std::fs::File;
+use std::io::{stdin, Read};
+
+use anyhow::{anyhow, Context, Result};
+use atty::Stream;
+use reqwest::blocking::Client;
+use reqwest::header::{
+    HeaderValue, ACCEPT, ACCEPT_ENCODING, CONNECTION, CONTENT_TYPE, RANGE, USER_AGENT,
+};
 use reqwest::redirect::Policy;
-use url::Url;
-use utils::body_from_stdin;
+
+use crate::auth::parse_auth;
+use crate::buffer::Buffer;
+use crate::cli::{Cli, Pretty, Print, Proxy, RequestType, Theme, Verify};
+use crate::download::{download_file, get_file_size};
+use crate::printer::Printer;
+use crate::request_items::{Body, RequestItems, FORM_CONTENT_TYPE, JSON_ACCEPT, JSON_CONTENT_TYPE};
+use crate::url::construct_url;
+use crate::utils::{test_mode, test_pretend_term};
 
 fn get_user_agent() -> &'static str {
-    // Hard-coded user agent for the benefit of tests
-    // In integration tests the binary isn't compiled with cfg(test), so we
-    // use an environment variable
-    if cfg!(test) || env::var_os("XH_TEST_MODE").is_some() {
+    if test_mode() {
+        // Hard-coded user agent for the benefit of tests
         "xh/0.0.0 (test mode)"
     } else {
         concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"))
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+#[exit_status::main]
+fn main() -> Result<i32> {
     let args = Cli::from_args();
+
+    if args.curl {
+        to_curl::print_curl_translation(args)?;
+        return Ok(0);
+    }
 
     let request_items = RequestItems::new(args.request_items);
     let query = request_items.query();
     let (headers, headers_to_unset) = request_items.headers()?;
-    #[allow(clippy::eval_order_dependence)]
-    let body = match (
-        request_items.body(args.form, args.multipart).await?,
-        // TODO: can we give an error before reading all of stdin?
-        body_from_stdin(args.ignore_stdin).await?,
-    ) {
-        (Some(_), Some(_)) => {
-            return Err(anyhow!(
-                "Request body (from stdin) and Request data (key=value) cannot be mixed"
-            ))
-        }
-        (Some(body), None) | (None, Some(body)) => Some(body),
-        (None, None) => None,
-    };
+    let url = construct_url(&args.url, args.default_scheme.as_deref(), query)?;
 
-    let (method, url) = args.method_url;
-    let url = Url::new(url, args.default_scheme)?;
-    let host = url.host().ok_or_else(|| anyhow!("Missing hostname"))?;
-    let method = method.unwrap_or_else(|| Method::from(&body)).into();
-    let auth = Auth::new(args.auth, args.auth_type, &host)?;
-    let redirect = match args.follow || args.download {
+    let ignore_stdin = args.ignore_stdin || atty::is(Stream::Stdin) || test_pretend_term();
+    let mut body = request_items.body(args.request_type)?;
+    if !ignore_stdin {
+        if !body.is_empty() {
+            if body.is_multipart() {
+                return Err(anyhow!("Cannot build a multipart request body from stdin"));
+            } else {
+                return Err(anyhow!(
+                    "Request body (from stdin) and Request data (key=value) cannot be mixed"
+                ));
+            }
+        }
+        let mut buffer = Vec::new();
+        stdin().read_to_end(&mut buffer)?;
+        body = Body::Raw(buffer);
+    }
+
+    let method = args.method.unwrap_or_else(|| body.pick_method());
+    let redirect = match args.follow {
         true => Policy::limited(args.max_redirects.unwrap_or(10)),
         false => Policy::none(),
     };
 
-    let client = Client::builder().redirect(redirect).build()?;
+    let mut client = Client::builder().redirect(redirect);
+    let mut resume: Option<u64> = None;
+
+    if url.scheme() == "https" {
+        if args.verify == Verify::No {
+            client = client.danger_accept_invalid_certs(true);
+        }
+
+        if let Verify::CustomCABundle(path) = args.verify {
+            client = client.tls_built_in_root_certs(false);
+
+            let mut buffer = Vec::new();
+            let mut file = File::open(&path).with_context(|| {
+                format!("Failed to open the custom CA bundle: {}", path.display())
+            })?;
+            file.read_to_end(&mut buffer).with_context(|| {
+                format!("Failed to read the custom CA bundle: {}", path.display())
+            })?;
+
+            for pem in pem::parse_many(buffer) {
+                let certificate = reqwest::Certificate::from_pem(pem::encode(&pem).as_bytes())
+                    .with_context(|| {
+                        format!("Failed to load the custom CA bundle: {}", path.display())
+                    })?;
+                client = client.add_root_certificate(certificate);
+            }
+        };
+
+        if let Some(cert) = args.cert {
+            let mut buffer = Vec::new();
+            let mut file = File::open(&cert)
+                .with_context(|| format!("Failed to open the cert file: {}", cert.display()))?;
+            file.read_to_end(&mut buffer)
+                .with_context(|| format!("Failed to read the cert file: {}", cert.display()))?;
+
+            if let Some(cert_key) = args.cert_key {
+                buffer.push(b'\n');
+
+                let mut file = File::open(&cert_key).with_context(|| {
+                    format!("Failed to open the cert key file: {}", cert_key.display())
+                })?;
+                file.read_to_end(&mut buffer).with_context(|| {
+                    format!("Failed to read the cert key file: {}", cert_key.display())
+                })?;
+            }
+
+            let identity = reqwest::Identity::from_pem(&buffer)
+                .context("Failed to parse the cert/cert key files")?;
+            client = client.identity(identity);
+        };
+    }
+
+    for proxy in args.proxy.into_iter().rev() {
+        client = client.proxy(match proxy {
+            Proxy::Http(url) => reqwest::Proxy::http(url),
+            Proxy::Https(url) => reqwest::Proxy::https(url),
+            Proxy::All(url) => reqwest::Proxy::all(url),
+        }?);
+    }
+
+    let client = client.build()?;
+
     let request = {
         let mut request_builder = client
-            .request(method, url.0)
+            .request(method, url.clone())
             .header(ACCEPT_ENCODING, HeaderValue::from_static("gzip, deflate"))
             .header(CONNECTION, HeaderValue::from_static("keep-alive"))
             .header(USER_AGENT, get_user_agent());
 
         request_builder = match body {
-            Some(Body::Form(body)) => request_builder
-                .header(ACCEPT, HeaderValue::from_static("*/*"))
-                .form(&body),
-            Some(Body::Multipart(body)) => request_builder
-                .header(ACCEPT, HeaderValue::from_static("*/*"))
-                .multipart(body),
-            Some(Body::Json(body)) => request_builder
-                .header(ACCEPT, HeaderValue::from_static("application/json, */*"))
-                .json(&body),
-            Some(Body::Raw(body)) => request_builder
-                .header(ACCEPT, HeaderValue::from_static("application/json, */*"))
-                .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-                .body(body),
-            None => request_builder.header(ACCEPT, HeaderValue::from_static("*/*")),
-        };
-
-        request_builder = match get_file_size(&args.output) {
-            Some(r) if args.download && args.resume => {
-                request_builder.header(RANGE, HeaderValue::from_str(&format!("bytes={}", r))?)
+            Body::Form(body) => request_builder.form(&body),
+            Body::Multipart(body) => request_builder.multipart(body),
+            Body::Json(body) => {
+                // An empty JSON body would produce "{}" instead of "", so
+                // this is the one kind of body that needs an is_empty() check
+                if !body.is_empty() {
+                    request_builder
+                        .header(ACCEPT, HeaderValue::from_static(JSON_ACCEPT))
+                        .json(&body)
+                } else if args.json {
+                    request_builder
+                        .header(ACCEPT, HeaderValue::from_static(JSON_ACCEPT))
+                        .header(CONTENT_TYPE, HeaderValue::from_static(JSON_CONTENT_TYPE))
+                } else {
+                    // We're here because this is the default request type
+                    // There's nothing to do
+                    request_builder
+                }
             }
-            _ => request_builder,
+            Body::Raw(body) => match args.request_type {
+                Some(RequestType::Json) => request_builder
+                    .header(ACCEPT, HeaderValue::from_static(JSON_ACCEPT))
+                    .header(CONTENT_TYPE, HeaderValue::from_static(JSON_CONTENT_TYPE)),
+                Some(RequestType::Form) => request_builder
+                    .header(CONTENT_TYPE, HeaderValue::from_static(FORM_CONTENT_TYPE)),
+                Some(RequestType::Multipart) => unreachable!(),
+                None => request_builder,
+            }
+            .body(body),
         };
 
-        request_builder = match auth {
-            Some(Auth::Bearer(token)) => request_builder.bearer_auth(token),
-            Some(Auth::Basic(username, password)) => request_builder.basic_auth(username, password),
-            None => request_builder,
-        };
+        if args.resume {
+            if let Some(file_size) = get_file_size(args.output.as_deref()) {
+                request_builder = request_builder.header(RANGE, format!("bytes={}-", file_size));
+                resume = Some(file_size);
+            }
+        }
 
-        let mut request = request_builder.query(&query).headers(headers).build()?;
+        if let Some(auth) = args.auth {
+            let (username, password) = parse_auth(auth, url.host_str().unwrap_or("<host>"))?;
+            request_builder = request_builder.basic_auth(username, password);
+        }
+        if let Some(token) = args.bearer {
+            request_builder = request_builder.bearer_auth(token);
+        }
+
+        let mut request = request_builder.headers(headers).build()?;
 
         headers_to_unset.iter().for_each(|h| {
             request.headers_mut().remove(h);
@@ -116,7 +201,12 @@ async fn main() -> Result<()> {
         request
     };
 
-    let buffer = Buffer::new(args.download, &args.output, atty::is(Stream::Stdout))?;
+    let buffer = Buffer::new(
+        args.download,
+        &args.output,
+        atty::is(Stream::Stdout) || test_pretend_term(),
+    )?;
+    let is_redirect = buffer.is_redirect();
     let print = match args.print {
         Some(print) => print,
         None => Print::new(
@@ -137,16 +227,31 @@ async fn main() -> Result<()> {
         printer.print_request_body(&request)?;
     }
     if !args.offline {
-        let response = client.execute(request).await?;
+        let orig_url = request.url().clone();
+        let response = client.execute(request)?;
         if print.response_headers {
             printer.print_response_headers(&response)?;
         }
-        if args.download {
-            let resume = response.status() == StatusCode::PARTIAL_CONTENT;
-            download_file(response, args.output, resume, args.quiet).await?;
-        } else if print.response_body {
-            printer.print_response_body(response).await?;
+        let status = response.status();
+        let exit_code: i32 = match status.as_u16() {
+            _ if !(args.check_status || args.download) => 0,
+            300..=399 if !args.follow => 3,
+            400..=499 => 4,
+            500..=599 => 5,
+            _ => 0,
+        };
+        if is_redirect && exit_code != 0 {
+            eprintln!("\n{}: warning: HTTP {}\n", env!("CARGO_PKG_NAME"), status);
         }
+        if args.download {
+            if exit_code == 0 {
+                download_file(response, args.output, &orig_url, resume, args.quiet)?;
+            }
+        } else if print.response_body {
+            printer.print_response_body(response)?;
+        }
+        Ok(exit_code)
+    } else {
+        Ok(0)
     }
-    Ok(())
 }
