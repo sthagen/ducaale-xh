@@ -15,6 +15,13 @@ use crate::{buffer::Buffer, request_items::RequestItem, utils::test_pretend_term
 
 // Some doc comments were copy-pasted from HTTPie
 
+// structopt guidelines:
+// - Only use `short` with an explicit arg (`short = "x"`)
+// - Only use `long` with an implicit arg (just `long`)
+//   - Unless it needs a different name, but then also use `name = "..."`
+// - Add an uppercase value_name to options that take a value
+// - Add a line with triple {n} after any long doc comment
+
 /// xh is a friendly and fast tool for sending HTTP requests.
 ///
 /// It reimplements as much as possible of HTTPie's excellent design.
@@ -46,19 +53,24 @@ pub struct Cli {
 
     // Currently deprecated in favor of --bearer, un-hide if new auth types are introduced
     /// Specify the auth mechanism.
-    #[structopt(short = "A", long = "auth-type", possible_values = &AuthType::variants(),
+    #[structopt(short = "A", long, possible_values = &AuthType::variants(),
                 default_value = "basic", case_insensitive = true, hidden = true)]
     pub auth_type: AuthType,
 
     /// Authenticate as USER with PASS. PASS will be prompted if missing.
     ///
     /// Use a trailing colon (i.e. `USER:`) to authenticate with just a username.
+    /// {n}{n}{n}
     #[structopt(short = "a", long, value_name = "USER[:PASS]")]
     pub auth: Option<String>,
 
     /// Authenticate with a bearer token.
     #[structopt(long, value_name = "TOKEN")]
     pub bearer: Option<String>,
+
+    /// Do not use credentials from .netrc
+    #[structopt(long)]
+    pub ignore_netrc: bool,
 
     /// Save output to FILE instead of stdout.
     #[structopt(short = "o", long, value_name = "FILE")]
@@ -85,7 +97,7 @@ pub struct Cli {
     pub body: bool,
 
     /// Resume an interrupted download. Requires --download and --output.
-    #[structopt(short = "c", long = "continue")]
+    #[structopt(short = "c", long = "continue", name = "continue")]
     pub resume: bool,
 
     /// String specifying what the output should contain.
@@ -94,6 +106,7 @@ pub struct Cli {
     /// and `h` and `b` for response hader and body.
     ///
     /// Example: `--print=Hb`
+    /// {n}{n}{n}
     #[structopt(short = "p", long, value_name = "FORMAT")]
     pub print: Option<Print>,
 
@@ -114,8 +127,8 @@ pub struct Cli {
     pub pretty: Option<Pretty>,
 
     /// Output coloring style.
-    #[structopt(short = "s", long = "style", possible_values = &Theme::variants(), case_insensitive = true, value_name = "THEME")]
-    pub theme: Option<Theme>,
+    #[structopt(short = "s", long, value_name = "THEME", possible_values = &Theme::variants(), case_insensitive = true)]
+    pub style: Option<Theme>,
 
     /// Exit with an error status code if the server replies with an error.
     ///
@@ -123,12 +136,14 @@ pub struct Cli {
     /// or 3 on 3xx (Redirect) if --follow isn't set.
     ///
     /// If stdout is redirected then a warning is written to stderr.
+    /// {n}{n}{n}
     #[structopt(long)]
     pub check_status: bool,
 
     /// Print a translation to a `curl` command.
     ///
     /// For translating the other way, try https://curl2httpie.online/.
+    /// {n}{n}{n}
     #[structopt(long)]
     pub curl: bool,
 
@@ -147,15 +162,16 @@ pub struct Cli {
     ///
     /// The environment variables `http_proxy` and `https_proxy` can also be used, but
     /// are completely ignored if --proxy is passed.
+    /// {n}{n}{n}
     #[structopt(long, value_name = "PROTOCOL:URL", number_of_values = 1)]
     pub proxy: Vec<Proxy>,
 
     /// The default scheme to use if not specified in the URL.
-    #[structopt(long = "default-scheme", value_name = "SCHEME", hidden = true)]
+    #[structopt(long, value_name = "SCHEME", hidden = true)]
     pub default_scheme: Option<String>,
 
     /// Make HTTPS requests if not specified in the URL.
-    #[structopt(long = "https")]
+    #[structopt(long)]
     pub https: bool,
 
     /// The request URL, preceded by an optional HTTP method.
@@ -163,25 +179,22 @@ pub struct Cli {
     /// METHOD can be `get`, `post`, `head`, `put`, `patch`, `delete` or `options`.
     /// If omitted, either a GET or a POST will be done depending on whether the
     /// request sends data.
+    /// {n}{n}{n}
     #[structopt(value_name = "[METHOD] URL")]
     raw_method_or_url: String,
 
-    /// Optional key-value pairs to be included in the request.
-    #[structopt(
-        value_name = "REQUEST_ITEM",
-        long_help = r"Optional key-value pairs to be included in the request.
-
-- key==value to add a parameter to the URL
-- key=value to add a JSON field (--json) or form field (--form)
-- key:=value to add a complex JSON value (e.g. `numbers:=[1,2,3]`)
-- key@filename to upload a file from filename (with --form)
-- header:value to add a header
-- header: to unset a header
-- header; to add a header with an empty value
-
-A backslash can be used to escape special characters (e.g. weird\:key=value).
-"
-    )]
+    /// Optional key-value pairs to be included in the request
+    ///
+    ///   - key==value to add a parameter to the URL
+    ///   - key=value to add a JSON field (--json) or form field (--form)
+    ///   - key:=value to add a complex JSON value (e.g. `numbers:=[1,2,3]`)
+    ///   - key@filename to upload a file from filename (with --form)
+    ///   - header:value to add a header
+    ///   - header: to unset a header
+    ///   - header; to add a header with an empty value
+    ///
+    /// A backslash can be used to escape special characters (e.g. weird\:key=value).
+    #[structopt(value_name = "REQUEST_ITEM", verbatim_doc_comment)]
     raw_rest_args: Vec<String>,
 
     /// The HTTP method, if supplied.
@@ -201,6 +214,7 @@ A backslash can be used to escape special characters (e.g. weird\:key=value).
     /// Specifying a CA bundle will disable the system's built-in root certificates.
     ///
     /// "false" instead of "no" also works. The default is "yes" ("true").
+    /// {n}{n}{n}
     #[structopt(long, default_value, hide_default_value = true, value_name = "VERIFY")]
     pub verify: Verify,
 
@@ -211,9 +225,53 @@ A backslash can be used to escape special characters (e.g. weird\:key=value).
     /// A private key file to use with --cert.
     ///
     /// Only necessary if the private key is not contained in the cert file.
-    #[structopt(long = "cert-key", value_name = "FILE")]
+    /// {n}{n}{n}
+    #[structopt(long, value_name = "FILE")]
     pub cert_key: Option<PathBuf>,
 }
+
+/// Names of flags that negate other flags.
+///
+/// This should in principle contain all options. When adding an option above,
+/// add the negating option here. Try to keep it in alphabetical order.
+///
+/// This list may also be generated by running:
+/// cargo expand cli | rg -o 'with_name\s*\("([^"]*)"\)' -r '    "--no-$1",' | rg -v 'raw-' | sort
+/// (https://crates.io/crates/cargo-expand, https://crates.io/crates/ripgrep)
+/// But this is fragile, please apply human judgment.
+const NEGATION_FLAGS: &[&str] = &[
+    "--no-auth",
+    "--no-auth-type",
+    "--no-bearer",
+    "--no-body",
+    "--no-cert",
+    "--no-cert-key",
+    "--no-check-status",
+    "--no-continue",
+    "--no-curl",
+    "--no-curl-long",
+    "--no-default-scheme",
+    "--no-download",
+    "--no-follow",
+    "--no-form",
+    "--no-headers",
+    "--no-https",
+    "--no-ignore-netrc",
+    "--no-ignore-stdin",
+    "--no-json",
+    "--no-max-redirects",
+    "--no-multipart",
+    "--no-offline",
+    "--no-output",
+    "--no-pretty",
+    "--no-print",
+    "--no-proxy",
+    "--no-quiet",
+    "--no-stream",
+    "--no-style",
+    "--no-verbose",
+    "--no-verify",
+];
 
 impl Cli {
     pub fn from_args() -> Self {
@@ -250,7 +308,8 @@ impl Cli {
                                 \n\
                                 Options:\n\
                                 {flags}\n\
-                                {options}\
+                                {options}\n\
+                                {after-help}\
                             ",
                         )
                         .print_long_help()
@@ -357,16 +416,36 @@ impl Cli {
         }
         Ok(())
     }
+
+    pub fn clap() -> clap::App<'static, 'static> {
+        let mut app = <Self as StructOpt>::clap();
+        for &flag in NEGATION_FLAGS {
+            // `orig` and `flag` both need a static lifetime, so we
+            // build `orig` by trimming `flag` instead of building `flag`
+            // by extending `orig`
+            let orig = flag.strip_prefix("--no-").unwrap();
+            app = app.arg(
+                // The name is inconsequential, but it has to be unique and it
+                // needs a static lifetime, and `flag` satisfies that
+                clap::Arg::with_name(flag)
+                    .long(flag)
+                    .hidden(true)
+                    // overrides_with is enough to make the flags take effect
+                    // We never have to check their values, they'll simply
+                    // unset previous occurrences of the original flag
+                    .overrides_with(orig),
+            );
+        }
+        app.after_help("Each option can be reset with a --no-OPTION argument.")
+    }
 }
 
 fn parse_method(method: &str) -> Option<Method> {
-    // These are defined as constants on Method
-    const METHODS: &[&str] = &[
-        "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "CONNECT", "PATCH", "TRACE",
-    ];
-    let method = method.to_ascii_uppercase();
-    if METHODS.contains(&method.as_str()) {
-        Some(method.parse().unwrap())
+    // This unfortunately matches "localhost"
+    if !method.is_empty() && method.chars().all(|c| c.is_ascii_alphabetic()) {
+        // Method parsing seems to fail if the length is 0 or if there's a null byte
+        // Our checks rule those both out, so .unwrap() is safe
+        Some(method.to_ascii_uppercase().parse().unwrap())
     } else {
         None
     }
@@ -707,6 +786,22 @@ mod tests {
     }
 
     #[test]
+    fn method_edge_cases() {
+        // "localhost" is interpreted as method; this is undesirable, but expected
+        parse(&["localhost"]).unwrap_err();
+
+        // Non-standard method used by varnish
+        let cli = parse(&["purge", ":"]).unwrap();
+        assert_eq!(cli.method, Some("PURGE".parse().unwrap()));
+        assert_eq!(cli.url, ":");
+
+        // Zero-length arg should not be interpreted as method
+        let cli = parse(&[""]).unwrap();
+        assert_eq!(cli.method, None);
+        assert_eq!(cli.url, "");
+    }
+
+    #[test]
     fn missing_url() {
         parse(&["get"]).unwrap_err();
     }
@@ -863,5 +958,107 @@ mod tests {
     fn executable_name_extension() {
         let args = Cli::from_iter_safe(&["xhs.exe", "example.org"]).unwrap();
         assert_eq!(args.https, true);
+    }
+
+    #[test]
+    fn negated_flags() {
+        let cli = parse(&["--no-offline", ":"]).unwrap();
+        assert_eq!(cli.offline, false);
+
+        let cli = parse(&["--check-status", "--no-check-status", ":"]).unwrap();
+        assert_eq!(cli.check_status, false);
+
+        // In HTTPie, the order doesn't matter, so this would be false
+        let cli = parse(&["--no-offline", "--offline", ":"]).unwrap();
+        assert_eq!(cli.offline, true);
+
+        // In HTTPie, this resolves to json, but that seems wrong
+        let cli = parse(&["--no-form", "--multipart", ":"]).unwrap();
+        assert_eq!(cli.request_type, RequestType::Multipart);
+        assert_eq!(cli.json, false);
+        assert_eq!(cli.form, false);
+        assert_eq!(cli.multipart, true);
+
+        let cli = parse(&["--multipart", "--no-form", ":"]).unwrap();
+        assert_eq!(cli.request_type, RequestType::Multipart);
+        assert_eq!(cli.json, false);
+        assert_eq!(cli.form, false);
+        assert_eq!(cli.multipart, true);
+
+        let cli = parse(&["--form", "--no-form", ":"]).unwrap();
+        assert_eq!(cli.request_type, RequestType::Json);
+        assert_eq!(cli.json, false);
+        assert_eq!(cli.form, false);
+        assert_eq!(cli.multipart, false);
+
+        let cli = parse(&["--form", "--json", "--no-form", ":"]).unwrap();
+        assert_eq!(cli.request_type, RequestType::Json);
+        assert_eq!(cli.json, true);
+        assert_eq!(cli.form, false);
+        assert_eq!(cli.multipart, false);
+
+        let cli = parse(&["--curl-long", "--no-curl-long", ":"]).unwrap();
+        assert_eq!(cli.curl_long, false);
+        let cli = parse(&["--no-curl-long", "--curl-long", ":"]).unwrap();
+        assert_eq!(cli.curl_long, true);
+
+        let cli = parse(&["-do=fname", "--continue", "--no-continue", ":"]).unwrap();
+        assert_eq!(cli.resume, false);
+        let cli = parse(&["-do=fname", "--no-continue", "--continue", ":"]).unwrap();
+        assert_eq!(cli.resume, true);
+
+        let cli = parse(&["-I", "--no-ignore-stdin", ":"]).unwrap();
+        assert_eq!(cli.ignore_stdin, false);
+        let cli = parse(&["--no-ignore-stdin", "-I", ":"]).unwrap();
+        assert_eq!(cli.ignore_stdin, true);
+
+        let cli = parse(&[
+            "--proxy=http:http://foo",
+            "--proxy=http:http://bar",
+            "--no-proxy",
+            ":",
+        ])
+        .unwrap();
+        assert!(cli.proxy.is_empty());
+
+        let cli = parse(&[
+            "--no-proxy",
+            "--proxy=http:http://foo",
+            "--proxy=https:http://bar",
+            ":",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.proxy,
+            vec![
+                Proxy::Http("http://foo".parse().unwrap()),
+                Proxy::Https("http://bar".parse().unwrap())
+            ]
+        );
+
+        let cli = parse(&[
+            "--proxy=http:http://foo",
+            "--no-proxy",
+            "--proxy=https:http://bar",
+            ":",
+        ])
+        .unwrap();
+        assert_eq!(cli.proxy, vec![Proxy::Https("http://bar".parse().unwrap())]);
+
+        let cli = parse(&["--bearer=baz", "--no-bearer", ":"]).unwrap();
+        assert_eq!(cli.bearer, None);
+
+        let cli = parse(&["--style=solarized", "--no-style", ":"]).unwrap();
+        assert_eq!(cli.style, None);
+
+        let cli = parse(&[
+            "--auth=foo:bar",
+            "--auth-type=bearer",
+            "--no-auth-type",
+            ":",
+        ])
+        .unwrap();
+        assert_eq!(cli.bearer, None);
+        assert_eq!(cli.auth_type, AuthType::basic);
     }
 }

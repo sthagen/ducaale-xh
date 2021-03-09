@@ -1,3 +1,11 @@
+## [0.9.0] - 2021-03-08
+### Features
+- Add _--no-FLAG_ variants of flags. This is useful for disabling any flags you might have in your
+  alias, see #86 (@blyxxyz)
+- Support non-standard HTTP methods, see #89 (@blyxxyz)
+- Add support for getting credentials from .netrc plus a _--ignore-netrc_ flag to disable that
+  functionality, see #87 (@dwink)
+
 ## [0.8.1] - 2021-03-01
 ### Features
 - Highlight Javascript and CSS, see #82 (@blyxxyz)
