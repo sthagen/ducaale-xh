@@ -23,7 +23,7 @@ use reqwest::redirect::Policy;
 
 use crate::auth::{auth_from_netrc, parse_auth, read_netrc};
 use crate::buffer::Buffer;
-use crate::cli::{Cli, Pretty, Print, Proxy, RequestType, Theme, Verify};
+use crate::cli::{Cli, Print, Proxy, RequestType, Verify};
 use crate::download::{download_file, get_file_size};
 use crate::printer::Printer;
 use crate::request_items::{Body, RequestItems, FORM_CONTENT_TYPE, JSON_ACCEPT, JSON_CONTENT_TYPE};
@@ -80,27 +80,27 @@ fn main() -> Result<i32> {
     let mut resume: Option<u64> = None;
 
     if url.scheme() == "https" {
-        if args.verify == Verify::No {
-            client = client.danger_accept_invalid_certs(true);
-        }
+        client = match args.verify.unwrap_or(Verify::Yes) {
+            Verify::Yes => client,
+            Verify::No => client.danger_accept_invalid_certs(true),
+            Verify::CustomCABundle(path) => {
+                let mut buffer = Vec::new();
+                let mut file = File::open(&path).with_context(|| {
+                    format!("Failed to open the custom CA bundle: {}", path.display())
+                })?;
+                file.read_to_end(&mut buffer).with_context(|| {
+                    format!("Failed to read the custom CA bundle: {}", path.display())
+                })?;
 
-        if let Verify::CustomCABundle(path) = args.verify {
-            client = client.tls_built_in_root_certs(false);
-
-            let mut buffer = Vec::new();
-            let mut file = File::open(&path).with_context(|| {
-                format!("Failed to open the custom CA bundle: {}", path.display())
-            })?;
-            file.read_to_end(&mut buffer).with_context(|| {
-                format!("Failed to read the custom CA bundle: {}", path.display())
-            })?;
-
-            for pem in pem::parse_many(buffer) {
-                let certificate = reqwest::Certificate::from_pem(pem::encode(&pem).as_bytes())
-                    .with_context(|| {
-                        format!("Failed to load the custom CA bundle: {}", path.display())
-                    })?;
-                client = client.add_root_certificate(certificate);
+                client = client.tls_built_in_root_certs(false);
+                for pem in pem::parse_many(buffer) {
+                    let certificate = reqwest::Certificate::from_pem(pem::encode(&pem).as_bytes())
+                        .with_context(|| {
+                            format!("Failed to load the custom CA bundle: {}", path.display())
+                        })?;
+                    client = client.add_root_certificate(certificate);
+                }
+                client
             }
         };
 
@@ -212,6 +212,7 @@ fn main() -> Result<i32> {
         args.download,
         &args.output,
         atty::is(Stream::Stdout) || test_pretend_term(),
+        args.pretty,
     )?;
     let is_redirect = buffer.is_redirect();
     let print = match args.print {
@@ -225,7 +226,8 @@ fn main() -> Result<i32> {
             &buffer,
         ),
     };
-    let mut printer = Printer::new(args.pretty, args.style, args.stream, buffer);
+    let pretty = args.pretty.unwrap_or_else(|| buffer.guess_pretty());
+    let mut printer = Printer::new(pretty, args.style, args.stream, buffer);
 
     if print.request_headers {
         printer.print_request_headers(&request)?;
@@ -252,7 +254,14 @@ fn main() -> Result<i32> {
         }
         if args.download {
             if exit_code == 0 {
-                download_file(response, args.output, &orig_url, resume, args.quiet)?;
+                download_file(
+                    response,
+                    args.output,
+                    &orig_url,
+                    resume,
+                    pretty.color(),
+                    args.quiet,
+                )?;
             }
         } else if print.response_body {
             printer.print_response_body(response)?;
