@@ -1,6 +1,7 @@
 use std::{
     fmt,
-    io::{self, stdout, Stdout, Write},
+    io::{self, stdout, LineWriter, Stdout, Write},
+    path::Path,
 };
 
 use termcolor::{Ansi, ColorChoice, StandardStream, WriteColor};
@@ -11,7 +12,11 @@ use crate::{
 };
 
 pub enum Buffer {
-    File(Ansi<std::fs::File>),
+    // These are all line-buffered (File explicitly, the others implicitly)
+    // Line buffering gives unsurprising behavior but can still be a lot
+    // faster than no buffering, especially with lots of small writes from
+    // coloring
+    File(Ansi<LineWriter<std::fs::File>>),
     Redirect(Ansi<Stdout>),
     Stdout(StandardStream),
     Stderr(StandardStream),
@@ -20,7 +25,7 @@ pub enum Buffer {
 impl Buffer {
     pub fn new(
         download: bool,
-        output: &Option<String>,
+        output: Option<&Path>,
         is_stdout_tty: bool,
         pretty: Option<Pretty>,
     ) -> io::Result<Self> {
@@ -34,7 +39,7 @@ impl Buffer {
             Buffer::Stderr(StandardStream::stderr(color_choice))
         } else if let Some(output) = output {
             let file = std::fs::File::create(&output)?;
-            Buffer::File(Ansi::new(file))
+            Buffer::File(Ansi::new(LineWriter::new(file)))
         } else if is_stdout_tty {
             Buffer::Stdout(StandardStream::stdout(color_choice))
         } else {
@@ -62,7 +67,13 @@ impl Buffer {
         } else if test_pretend_term() {
             Pretty::format
         } else if self.is_terminal() {
-            Pretty::all
+            // supports_color() considers $TERM, $NO_COLOR, etc
+            // This lets us do the right thing with the progress bar
+            if self.supports_color() || cfg!(test) {
+                Pretty::all
+            } else {
+                Pretty::format
+            }
         } else {
             Pretty::none
         }

@@ -69,6 +69,7 @@ fn basic_json_post() {
             "status": "ok"
         }
 
+
         "#});
     mock.assert();
 }
@@ -205,6 +206,7 @@ fn verbose() {
         {
             "x": "y"
         }
+
 
 
         HTTP/1.1 200 OK
@@ -407,6 +409,42 @@ fn only_decode_for_terminal() {
         .stdout
         .clone();
     assert_eq!(&output, b"\xe9"); // .stdout() doesn't support byte slices
+    mock.assert();
+}
+
+#[test]
+fn do_decode_if_formatted() {
+    let server = MockServer::start();
+    let mock = server.mock(|_when, then| {
+        then.header("Content-Type", "text/plain; charset=latin1")
+            .body(b"\xe9");
+    });
+
+    redirecting_command()
+        .arg("--pretty=all")
+        .arg(server.base_url())
+        .assert()
+        .stdout("é");
+    mock.assert();
+}
+
+#[test]
+fn never_decode_if_binary() {
+    let server = MockServer::start();
+    let mock = server.mock(|_when, then| {
+        // this mimetype with a charset may actually be incoherent
+        then.header("Content-Type", "application/octet-stream; charset=latin1")
+            .body(b"\xe9");
+    });
+
+    let output = redirecting_command()
+        .arg("--pretty=all")
+        .arg(server.base_url())
+        .assert()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(&output, b"\xe9");
     mock.assert();
 }
 
@@ -790,6 +828,7 @@ fn formatted_json_output() {
             "": 0
         }
 
+
         "#});
     mock.assert();
 }
@@ -808,6 +847,7 @@ fn inferred_json_output() {
         {
             "": 0
         }
+
 
         "#});
     mock.assert();
@@ -828,6 +868,7 @@ fn inferred_json_javascript_output() {
         {
             "": 0
         }
+
 
         "#});
     mock.assert();
@@ -948,4 +989,20 @@ fn force_color_pipe() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\x1b[34m3\x1b[0m"));
+}
+
+#[test]
+fn request_json_keys_order_is_preserved() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, _| {
+        when.body(r#"{"name":"ali","age":24}"#);
+    });
+
+    get_command()
+        .arg("get")
+        .arg(server.base_url())
+        .arg("name=ali")
+        .arg("age:=24")
+        .assert();
+    mock.assert();
 }

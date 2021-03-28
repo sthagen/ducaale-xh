@@ -76,7 +76,9 @@ fn main() -> Result<i32> {
         false => Policy::none(),
     };
 
-    let mut client = Client::builder().redirect(redirect);
+    let mut client = Client::builder()
+        .http2_adaptive_window(true)
+        .redirect(redirect);
     let mut resume: Option<u64> = None;
 
     if url.scheme() == "https" {
@@ -210,7 +212,7 @@ fn main() -> Result<i32> {
 
     let buffer = Buffer::new(
         args.download,
-        &args.output,
+        args.output.as_deref(),
         atty::is(Stream::Stdout) || test_pretend_term(),
         args.pretty,
     )?;

@@ -139,7 +139,6 @@ xh -d httpbin.org/json -o res.json
 
 - Not all of HTTPie's features are implemented. ([#4](https://github.com/ducaale/xh/issues/4))
 - HTTP/2 cannot be disabled. ([#68](https://github.com/ducaale/xh/issues/68))
-- Large downloads over HTTP/2 are currently slow. ([#49](https://github.com/ducaale/xh/issues/49))
 - No plugin system.
 - General immaturity. HTTPie is old and well-tested.
 - Worse documentation.
@@ -149,6 +148,7 @@ xh -d httpbin.org/json -o res.json
 - `rustls` is used instead of the system's TLS library.
 - Headers are sent and printed in lowercase.
 - JSON keys are not sorted.
+- Formatted output is always UTF-8.
 
 ## Similar Projects
 
