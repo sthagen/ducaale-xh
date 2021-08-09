@@ -1,19 +1,30 @@
 #![cfg(feature = "integration-tests")]
 use std::{
+    collections::HashSet,
     fs::File,
-    fs::{read_to_string, OpenOptions},
+    fs::{create_dir_all, read_to_string, OpenOptions},
     io::{Seek, SeekFrom, Write},
     process::Command,
     time::Duration,
 };
 
 use assert_cmd::prelude::*;
-use httpmock::{Method::*, MockServer};
+use httpmock::{HttpMockRequest, Method::*, MockServer};
 use indoc::indoc;
 use predicate::str::contains;
 use predicates::prelude::*;
 use serde_json::json;
 use tempfile::{tempdir, tempfile};
+
+fn random_string() -> String {
+    use rand::Rng;
+
+    rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(10)
+        .map(char::from)
+        .collect()
+}
 
 fn get_base_command() -> Command {
     let mut cmd = Command::cargo_bin("xh").expect("binary should be present");
@@ -117,7 +128,7 @@ fn basic_options() {
         .arg(server.base_url())
         .assert()
         .stdout(contains("HTTP/1.1 200 OK"))
-        .stdout(contains("allow:"));
+        .stdout(contains("Allow:"));
     mock.assert();
 }
 
@@ -196,13 +207,13 @@ fn verbose() {
         .assert()
         .stdout(indoc! {r#"
         POST / HTTP/1.1
-        accept: application/json, */*;q=0.5
-        accept-encoding: gzip, deflate, br
-        connection: keep-alive
-        content-length: 9
-        content-type: application/json
-        host: http.mock
-        user-agent: xh/0.0.0 (test mode)
+        Accept: application/json, */*;q=0.5
+        Accept-Encoding: gzip, deflate, br
+        Connection: keep-alive
+        Content-Length: 9
+        Content-Type: application/json
+        Host: http.mock
+        User-Agent: xh/0.0.0 (test mode)
 
         {
             "x": "y"
@@ -211,9 +222,9 @@ fn verbose() {
 
 
         HTTP/1.1 200 OK
-        content-length: 6
-        date: N/A
-        x-foo: Bar
+        Content-Length: 6
+        Date: N/A
+        X-Foo: Bar
 
         a body
         "#});
@@ -734,7 +745,7 @@ fn check_status_warning() {
         .arg(server.base_url())
         .assert()
         .code(5)
-        .stderr("\nxh: warning: HTTP 501 Not Implemented\n\n");
+        .stderr("xh: warning: HTTP 501 Not Implemented\n");
     mock.assert();
 }
 
@@ -825,6 +836,21 @@ fn verify_valid_file() {
         .stderr(predicates::str::is_empty());
 }
 
+// This test may fail if https://github.com/seanmonstar/reqwest/issues/1260 is fixed
+// If that happens make sure to remove the warning, not just this test
+#[cfg(feature = "native-tls")]
+#[test]
+fn verify_valid_file_native_tls() {
+    get_command()
+        .arg("--native-tls")
+        .arg("--verify=tests/fixtures/certs/wildcard-self-signed.pem")
+        .arg("https://self-signed.badssl.com")
+        .assert()
+        .stderr(predicates::str::contains(
+            "Custom CA bundles with native-tls are broken",
+        ));
+}
+
 #[test]
 fn cert_without_key() {
     get_command()
@@ -852,6 +878,85 @@ fn cert_with_key() {
         .stdout(predicates::str::contains("HTTP/1.1 200 OK"))
         .stdout(predicates::str::contains("client-authenticated"))
         .stderr(predicates::str::is_empty());
+}
+
+#[cfg(feature = "native-tls")]
+#[test]
+fn cert_with_key_native_tls() {
+    get_command()
+        .arg("--native-tls")
+        .arg("--cert=tests/fixtures/certs/client.badssl.com.crt")
+        .arg("--cert-key=tests/fixtures/certs/client.badssl.com.key")
+        .arg("https://client.badssl.com")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "Client certificates are not supported for native-tls",
+        ));
+}
+
+#[cfg(not(feature = "native-tls"))]
+#[test]
+fn native_tls_flag_disabled() {
+    get_command()
+        .arg("--native-tls")
+        .arg(":")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "built without native-tls support",
+        ));
+}
+
+#[cfg(not(feature = "native-tls"))]
+#[test]
+fn improved_https_ip_error_no_support() {
+    get_command()
+        .arg("https://1.1.1.1")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("rustls does not support"))
+        .stderr(predicates::str::contains(
+            "building with the `native-tls` feature",
+        ));
+}
+
+#[cfg(feature = "native-tls")]
+#[test]
+fn native_tls_works() {
+    get_command()
+        .arg("--native-tls")
+        .arg("https://example.org")
+        .assert()
+        .success();
+}
+
+#[cfg(feature = "native-tls")]
+#[test]
+fn improved_https_ip_error_with_support() {
+    let server = MockServer::start();
+    let mock = server.mock(|_, then| {
+        then.permanent_redirect("https://1.1.1.1");
+    });
+    get_command()
+        .arg("--follow")
+        .arg(server.base_url())
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("rustls does not support"))
+        .stderr(predicates::str::contains("using the --native-tls flag"));
+    mock.assert();
+}
+
+#[cfg(feature = "native-tls")]
+#[test]
+fn auto_nativetls() {
+    get_command()
+        .arg("--offline")
+        .arg("https://1.1.1.1")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("native-tls will be enabled"));
 }
 
 #[test]
@@ -1307,10 +1412,489 @@ fn json_field_from_file() {
 }
 
 #[test]
+fn can_unset_default_headers() {
+    get_command()
+        .arg(":")
+        .arg("user-agent:")
+        .arg("--offline")
+        .assert()
+        .stdout(indoc! {r#"
+            GET / HTTP/1.1
+            Accept: */*
+            Accept-Encoding: gzip, deflate, br
+            Connection: keep-alive
+            Host: http.mock
+
+        "#});
+}
+
+#[test]
+fn can_unset_headers() {
+    get_command()
+        .arg(":")
+        .arg("hello:world")
+        .arg("goodby:world")
+        .arg("goodby:")
+        .arg("--offline")
+        .assert()
+        .stdout(indoc! {r#"
+            GET / HTTP/1.1
+            Accept: */*
+            Accept-Encoding: gzip, deflate, br
+            Connection: keep-alive
+            Hello: world
+            Host: http.mock
+            User-Agent: xh/0.0.0 (test mode)
+
+        "#});
+}
+
+#[test]
+fn can_set_unset_header() {
+    get_command()
+        .arg(":")
+        .arg("hello:")
+        .arg("hello:world")
+        .arg("--offline")
+        .assert()
+        .stdout(indoc! {r#"
+            GET / HTTP/1.1
+            Accept: */*
+            Accept-Encoding: gzip, deflate, br
+            Connection: keep-alive
+            Hello: world
+            Host: http.mock
+            User-Agent: xh/0.0.0 (test mode)
+
+        "#});
+}
+
+// httpmock's matches function doesn't accept closures
+// see https://github.com/alexliesenfeld/httpmock/issues/44#issuecomment-840797442
+macro_rules! cookie_exists {
+    ($when:ident, $expected_value:expr) => {{
+        $when.matches(|req: &HttpMockRequest| {
+            req.headers
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|(key, actual_value)| {
+                    key == "cookie" && {
+                        let expected = $expected_value.split("; ").collect::<HashSet<_>>();
+                        let actual = actual_value.split("; ").collect::<HashSet<_>>();
+                        actual == expected
+                    }
+                })
+        });
+    }};
+}
+
+#[test]
+fn named_sessions() {
+    let server = MockServer::start();
+    let mock = server.mock(|_, then| {
+        then.header("set-cookie", "cook1=one; Path=/");
+    });
+
+    let config_dir = tempdir().unwrap();
+    let random_name = random_string();
+
+    get_command()
+        .env("XH_CONFIG_DIR", config_dir.path())
+        .arg(server.base_url())
+        .arg(format!("--session={}", random_name))
+        .arg("--bearer=hello")
+        .arg("cookie:lang=en")
+        .assert()
+        .success();
+
+    mock.assert();
+
+    let path_to_session = config_dir.path().join::<std::path::PathBuf>(
+        [
+            "sessions",
+            &format!("127.0.0.1_{}", server.port()),
+            &format!("{}.json", random_name),
+        ]
+        .iter()
+        .collect(),
+    );
+
+    let session_content = read_to_string(path_to_session).unwrap();
+
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&session_content).unwrap(),
+        serde_json::json!({
+            "__meta__": {
+                "about": "xh session file",
+                "xh": "0.0.0"
+            },
+            "auth": { "type": "bearer", "raw_auth": "hello" },
+            "cookies": {
+                "cook1": { "value": "one", "path": "/" },
+                "lang": { "value": "en" }
+            },
+            "headers": {}
+        })
+    );
+}
+
+#[test]
+fn anonymous_sessions() {
+    let server = MockServer::start();
+    let mock = server.mock(|_, then| {
+        then.header("set-cookie", "cook1=one");
+    });
+
+    let mut path_to_session = std::env::temp_dir();
+    let file_name = random_string();
+    path_to_session.push(file_name);
+
+    get_command()
+        .arg(server.base_url())
+        .arg(format!("--session={}", path_to_session.to_string_lossy()))
+        .arg("--auth=me:pass")
+        .arg("hello:world")
+        .assert()
+        .success();
+
+    mock.assert();
+
+    let session_content = read_to_string(path_to_session).unwrap();
+
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&session_content).unwrap(),
+        serde_json::json!({
+            "__meta__": {
+                "about": "xh session file",
+                "xh": "0.0.0"
+            },
+            "auth": { "type": "basic", "raw_auth": "me:pass" },
+            "cookies": { "cook1": { "value": "one" } },
+            "headers": { "hello": "world" }
+        })
+    );
+}
+
+#[test]
+fn anonymous_read_only_session() {
+    let server = MockServer::start();
+    server.mock(|_, then| {
+        then.header("set-cookie", "lang=en");
+    });
+
+    let session_file = tempfile::NamedTempFile::new().unwrap();
+    let old_session_content = serde_json::json!({
+        "__meta__": { "about": "xh session file", "xh": "0.0.0" },
+        "auth": { "type": null, "raw_auth": null },
+        "cookies": { "cookie1": { "value": "one" } },
+        "headers": { "hello": "world" }
+    });
+
+    std::fs::write(&session_file, old_session_content.to_string()).unwrap();
+
+    get_command()
+        .arg(server.base_url())
+        .arg("goodbye:world")
+        .arg(format!(
+            "--session-read-only={}",
+            session_file.path().to_string_lossy()
+        ))
+        .assert()
+        .success();
+
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&read_to_string(session_file.path()).unwrap())
+            .unwrap(),
+        old_session_content
+    );
+}
+
+#[test]
+fn session_files_are_created_in_read_only_mode() {
+    let server = MockServer::start();
+    server.mock(|_, then| {
+        then.header("set-cookie", "lang=ar");
+    });
+
+    let mut path_to_session = std::env::temp_dir();
+    let file_name = random_string();
+    path_to_session.push(file_name);
+    assert_eq!(path_to_session.exists(), false);
+
+    get_command()
+        .arg(server.base_url())
+        .arg("hello:world")
+        .arg(format!(
+            "--session-read-only={}",
+            path_to_session.to_string_lossy()
+        ))
+        .assert()
+        .success();
+
+    let session_content = read_to_string(path_to_session).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&session_content).unwrap(),
+        serde_json::json!({
+            "__meta__": {
+                "about": "xh session file",
+                "xh": "0.0.0"
+            },
+            "auth": { "type": null, "raw_auth": null },
+            "cookies": {
+                "lang": { "value": "ar" }
+            },
+            "headers": {
+                "hello": "world"
+            }
+        })
+    );
+}
+
+#[test]
+fn named_read_only_session() {
+    let server = MockServer::start();
+    server.mock(|_, then| {
+        then.header("set-cookie", "lang=en");
+    });
+
+    let config_dir = tempdir().unwrap();
+    let random_name = random_string();
+    let path_to_session = config_dir.path().join::<std::path::PathBuf>(
+        [
+            "xh",
+            "sessions",
+            &format!("127.0.0.1_{}", server.port()),
+            &format!("{}.json", random_name),
+        ]
+        .iter()
+        .collect(),
+    );
+    let old_session_content = serde_json::json!({
+        "__meta__": { "about": "xh session file", "xh": "0.0.0" },
+        "auth": { "type": null, "raw_auth": null },
+        "cookies": {
+            "cookie1": { "value": "one" }
+        },
+        "headers": {
+            "hello": "world"
+        }
+    });
+    create_dir_all(path_to_session.parent().unwrap()).unwrap();
+    File::create(&path_to_session).unwrap();
+    std::fs::write(&path_to_session, old_session_content.to_string()).unwrap();
+
+    get_command()
+        .env("XH_CONFIG_DIR", config_dir.path())
+        .arg(server.base_url())
+        .arg("goodbye:world")
+        .arg(format!("--session-read-only={}", random_name))
+        .assert()
+        .success();
+
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&read_to_string(path_to_session).unwrap())
+            .unwrap(),
+        old_session_content
+    );
+}
+
+#[test]
+fn expired_cookies_are_removed_from_session() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let future_timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 1000;
+    let past_timestamp = 1114425967; // 2005-04-25
+
+    let session_file = tempfile::NamedTempFile::new().unwrap();
+
+    std::fs::write(
+        &session_file,
+        serde_json::json!({
+            "__meta__": { "about": "xh session file", "xh": "0.0.0" },
+            "auth": { "type": null, "raw_auth": null },
+            "cookies": {
+                "expired_cookie": {
+                    "value": "random_string",
+                    "expires": past_timestamp
+                },
+                "unexpired_cookie": {
+                    "value": "random_string",
+                    "expires": future_timestamp
+                },
+                "with_out_expiry": {
+                    "value": "random_string",
+                }
+            },
+            "headers": {}
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    get_command()
+        .arg(":")
+        .arg(format!(
+            "--session={}",
+            session_file.path().to_string_lossy()
+        ))
+        .arg("--offline")
+        .assert()
+        .success();
+
+    let session_content = read_to_string(session_file.path()).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&session_content).unwrap(),
+        serde_json::json!({
+            "__meta__": { "about": "xh session file", "xh": "0.0.0" },
+            "auth": { "type": null, "raw_auth": null },
+            "cookies": {
+                "unexpired_cookie": {
+                    "value": "random_string",
+                    "expires": future_timestamp
+                },
+                "with_out_expiry": {
+                    "value": "random_string",
+                }
+            },
+            "headers": {}
+        })
+    );
+}
+
+#[test]
+fn cookies_override_each_other_in_the_correct_order() {
+    // Cookies storage priority is: Server response > Command line request > Session file
+    // See https://httpie.io/docs#cookie-storage-behaviour
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        cookie_exists!(when, "lang=fr; cook1=two; cook2=two");
+        then.header("set-cookie", "lang=en")
+            .header("set-cookie", "cook1=one");
+    });
+
+    let session_file = tempfile::NamedTempFile::new().unwrap();
+
+    std::fs::write(
+        &session_file,
+        serde_json::json!({
+            "__meta__": { "about": "xh session file", "xh": "0.0.0" },
+            "auth": { "type": null, "raw_auth": null },
+            "cookies": {
+                "lang": { "value": "fr" },
+                "cook2": { "value": "three" }
+            },
+            "headers": {}
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    get_command()
+        .arg(server.base_url())
+        .arg("cookie:cook1=two;cook2=two")
+        .arg(format!(
+            "--session={}",
+            session_file.path().to_string_lossy()
+        ))
+        .arg("--no-check-status")
+        .assert()
+        .success();
+
+    mock.assert();
+
+    let session_content = read_to_string(session_file.path()).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&session_content).unwrap(),
+        serde_json::json!({
+            "__meta__": { "about": "xh session file", "xh": "0.0.0" },
+            "auth": { "type": null, "raw_auth": null },
+            "cookies": {
+                "lang": { "value": "en" },
+                "cook1": { "value": "one" },
+                "cook2": { "value": "two" }
+            },
+            "headers": {}
+        })
+    );
+}
+
+#[test]
+fn basic_auth_from_session_is_used() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, _| {
+        when.header("authorization", "Basic dXNlcjpwYXNz");
+    });
+
+    let session_file = tempfile::NamedTempFile::new().unwrap();
+
+    std::fs::write(
+        &session_file,
+        serde_json::json!({
+            "__meta__": { "about": "xh session file", "xh": "0.0.0" },
+            "auth": { "type": "basic", "raw_auth": "user:pass" },
+            "cookies": {},
+            "headers": {}
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    get_command()
+        .arg(server.base_url())
+        .arg(format!(
+            "--session={}",
+            session_file.path().to_string_lossy()
+        ))
+        .arg("--no-check-status")
+        .assert()
+        .success();
+
+    mock.assert();
+}
+
+#[test]
+fn bearer_auth_from_session_is_used() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, _| {
+        when.header("authorization", "Bearer secret-token");
+    });
+
+    let session_file = tempfile::NamedTempFile::new().unwrap();
+
+    std::fs::write(
+        &session_file,
+        serde_json::json!({
+            "__meta__": { "about": "xh session file", "xh": "0.0.0" },
+            "auth": { "type": "bearer", "raw_auth": "secret-token" },
+            "cookies": {},
+            "headers": {}
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    get_command()
+        .arg(server.base_url())
+        .arg(format!(
+            "--session={}",
+            session_file.path().to_string_lossy()
+        ))
+        .arg("--no-check-status")
+        .assert()
+        .success();
+
+    mock.assert();
+}
+
+#[test]
 fn accept_encoding_not_modifiable_in_download_mode() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
-        when.header("accept-encoding", "identity");
+        when.header("Accept-Encoding", "identity");
         then.body(r#"{"ids":[1,2,3]}"#);
     });
 
@@ -1319,7 +1903,48 @@ fn accept_encoding_not_modifiable_in_download_mode() {
         .current_dir(&dir)
         .arg(server.base_url())
         .arg("--download")
-        .arg("accept-encoding:gzip")
+        .arg("Accept-Encoding:gzip")
         .assert();
     mock.assert();
+}
+
+#[test]
+fn read_args_from_config() {
+    let config_dir = tempdir().unwrap();
+    File::create(config_dir.path().join("config.json")).unwrap();
+    std::fs::write(
+        config_dir.path().join("config.json"),
+        serde_json::json!({"default_options": ["--form", "--print=hbHB"]}).to_string(),
+    )
+    .unwrap();
+
+    get_command()
+        .env("XH_CONFIG_DIR", config_dir.path())
+        .arg(":")
+        .arg("--offline")
+        .arg("--print=B") // this should overwrite the value from config.json
+        .arg("sort=asc")
+        .arg("limit=100")
+        .assert()
+        .stdout("sort=asc&limit=100\n\n")
+        .success();
+}
+
+#[test]
+fn warns_if_config_is_invalid() {
+    let config_dir = tempdir().unwrap();
+    File::create(config_dir.path().join("config.json")).unwrap();
+    std::fs::write(
+        config_dir.path().join("config.json"),
+        serde_json::json!({"default_options": "--form"}).to_string(),
+    )
+    .unwrap();
+
+    get_command()
+        .env("XH_CONFIG_DIR", config_dir.path())
+        .arg(":")
+        .arg("--offline")
+        .assert()
+        .stderr(contains("Unable to parse config file"))
+        .success();
 }

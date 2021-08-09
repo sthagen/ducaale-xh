@@ -22,6 +22,8 @@ _xh() {
 '--print=[String specifying what the output should contain]' \
 '-o+[Save output to FILE instead of stdout]' \
 '--output=[Save output to FILE instead of stdout]' \
+'--session=[Create, or reuse and update a session]' \
+'(--session)--session-read-only=[Create or read a session without updating it form the request/response exchange]' \
 '-A+[Specify the auth mechanism]: :(basic bearer)' \
 '--auth-type=[Specify the auth mechanism]: :(basic bearer)' \
 '-a+[Authenticate as USER with PASS. PASS will be prompted if missing]' \
@@ -59,6 +61,7 @@ _xh() {
 '--check-status[(default) Exit with an error status code if the server replies with an error]' \
 '-F[Do follow redirects]' \
 '--follow[Do follow redirects]' \
+'--native-tls[Use the system TLS library instead of rustls (if enabled at compile time)]' \
 '--https[Make HTTPS requests if not specified in the URL]' \
 '-I[Do not attempt to read stdin]' \
 '--ignore-stdin[Do not attempt to read stdin]' \
@@ -85,12 +88,15 @@ _xh() {
 '--no-json[]' \
 '--no-max-redirects[]' \
 '--no-multipart[]' \
+'--no-native-tls[]' \
 '--no-offline[]' \
 '--no-output[]' \
 '--no-pretty[]' \
 '--no-print[]' \
 '--no-proxy[]' \
 '--no-quiet[]' \
+'--no-session[]' \
+'--no-session-read-only[]' \
 '--no-stream[]' \
 '--no-style[]' \
 '--no-timeout[]' \
