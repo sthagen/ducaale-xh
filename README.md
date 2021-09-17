@@ -3,7 +3,8 @@
 [![Packaging status](https://repology.org/badge/tiny-repos/xh.svg)](https://repology.org/project/xh/versions)
 
 `xh` is a friendly and fast tool for sending HTTP requests. It reimplements as much
-as possible of [HTTPie's](https://httpie.io/) excellent design.
+as possible of [HTTPie's](https://httpie.io/) excellent design, with a focus
+on improved performance.
 
 [![asciicast](/assets/xh-demo.gif)](https://asciinema.org/a/390748)
 
@@ -51,6 +52,8 @@ OPTIONS:
     -h, --headers                     Print only the response headers, shortcut for --print=h
     -b, --body                        Print only the response body, Shortcut for --print=b
     -v, --verbose                     Print the whole request as well as the response
+        --all                         Show any intermediary requests/responses while following redirects with --follow
+    -P, --history-print <FORMAT>      The same as --print but applies only to intermediary requests/responses
     -q, --quiet                       Do not print to stdout or stderr
     -S, --stream                      Always stream the response body
     -o, --output <FILE>               Save output to FILE instead of stdout
@@ -106,11 +109,11 @@ Similar to HTTPie, specifying the scheme portion of the request URL is optional.
 omitting `localhost` from the URL as long it starts with colon plus an optional port number. 
 
 ```sh
-xh localhost:3000/users # resolves to http://localhost:3000/users
-xh localhost:3000/users # resolves to http://localhost:3000/users
-xh :3000/users          # resolves to http://localhost:3000/users
-xh :/users              # resolves to http://localhost:80/users
-xh example.com          # resolves to http://example.com
+xh http://localhost:3000/users # resolves to http://localhost:3000/users
+xh localhost:3000/users        # resolves to http://localhost:3000/users
+xh :3000/users                 # resolves to http://localhost:3000/users
+xh :/users                     # resolves to http://localhost:80/users
+xh example.com                 # resolves to http://example.com
 ```
 
 ### Making HTTPS requests by default

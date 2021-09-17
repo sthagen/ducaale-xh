@@ -1,5 +1,4 @@
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
-use std::sync::Arc;
 
 use encoding_rs::{Encoding, UTF_8};
 use encoding_rs_io::DecodeReaderBytesBuilder;
@@ -14,7 +13,7 @@ use termcolor::WriteColor;
 
 use crate::{
     buffer::Buffer,
-    cli::{Pretty, Theme},
+    cli::{Pretty, Print, Theme},
     formatting::{get_json_formatter, Highlighter},
     utils::{copy_largebuf, test_mode, BUFFER_SIZE},
 };
@@ -67,6 +66,7 @@ impl<'a, T: Read> BinaryGuard<'a, T> {
 }
 
 pub struct Printer {
+    pub print: Print,
     indent_json: bool,
     color: bool,
     theme: Theme,
@@ -76,10 +76,17 @@ pub struct Printer {
 }
 
 impl Printer {
-    pub fn new(pretty: Pretty, theme: Option<Theme>, stream: bool, buffer: Buffer) -> Self {
+    pub fn new(
+        print: Print,
+        pretty: Pretty,
+        theme: Option<Theme>,
+        stream: bool,
+        buffer: Buffer,
+    ) -> Self {
         let theme = theme.unwrap_or(Theme::auto);
 
         Printer {
+            print,
             indent_json: pretty.format(),
             sort_headers: pretty.format(),
             color: pretty.color() && (cfg!(test) || buffer.supports_color()),
@@ -259,30 +266,16 @@ impl Printer {
         for (key, value) in headers {
             if as_titlecase {
                 // Ought to be equivalent to how hyper does it
-                // https://github.com/hyperium/hyper/blob/54b57c4797e1210924d901a665f9d17ae7dd9956/src/proto/h1/role.rs#L1315
+                // https://github.com/hyperium/hyper/blob/f46b175bf71b202fbb907c4970b5743881b891e1/src/proto/h1/role.rs#L1332
                 // Header names are ASCII so it's ok to operate on char instead of u8
-                let mut iter = key.as_str().chars();
-                if let Some(c) = iter.next() {
-                    header_string.push(c.to_ascii_uppercase());
-                }
-                while let Some(c) = iter.next() {
-                    header_string.push(c);
-                    if c == '-' {
-                        if let Some(c) = iter.next() {
-                            header_string.push(c.to_ascii_uppercase());
-                        }
+                let mut prev = '-';
+                for mut c in key.as_str().chars() {
+                    if prev == '-' {
+                        c.make_ascii_uppercase();
                     }
+                    header_string.push(c);
+                    prev = c;
                 }
-                // If https://github.com/hyperium/hyper/pull/2613 is released,
-                // switch to this implementation:
-                // let mut prev = '-';
-                // for mut c in key.as_str().chars() {
-                //     if prev == '-' {
-                //         c.make_ascii_uppercase();
-                //     }
-                //     header_string.push(c);
-                //     prev = c;
-                // }
             } else {
                 header_string.push_str(key.as_str());
             }
@@ -298,14 +291,24 @@ impl Printer {
         header_string
     }
 
-    pub fn print_request_headers<T>(
-        &mut self,
-        request: &Request,
-        cookie_jar: Arc<T>,
-    ) -> io::Result<()>
+    // Each of the print_* functions adds an extra line separator at the end
+    // except for print_response_body. We are using this function when we have
+    // something to print after the response body.
+    pub fn print_separator(&mut self) -> io::Result<()> {
+        if self.print.response_body {
+            self.buffer.print("\n")?;
+        }
+        Ok(())
+    }
+
+    pub fn print_request_headers<T>(&mut self, request: &Request, cookie_jar: &T) -> io::Result<()>
     where
         T: CookieStore,
     {
+        if !self.print.request_headers {
+            return Ok(());
+        }
+
         let method = request.method();
         let url = request.url();
         let query_string = url.query().map_or(String::from(""), |q| ["?", q].concat());
@@ -354,6 +357,10 @@ impl Printer {
     }
 
     pub fn print_response_headers(&mut self, response: &Response) -> io::Result<()> {
+        if !self.print.response_headers {
+            return Ok(());
+        }
+
         let version = response.version();
         let status = response.status();
         let headers = response.headers();
@@ -367,6 +374,10 @@ impl Printer {
     }
 
     pub fn print_request_body(&mut self, request: &mut Request) -> anyhow::Result<()> {
+        if !self.print.request_body {
+            return Ok(());
+        }
+
         let content_type = get_content_type(request.headers());
         if let Some(body) = request.body_mut() {
             let body = body.buffer()?;
@@ -383,6 +394,10 @@ impl Printer {
     }
 
     pub fn print_response_body(&mut self, mut response: Response) -> anyhow::Result<()> {
+        if !self.print.response_body {
+            return Ok(());
+        }
+
         let content_type = get_content_type(response.headers());
         if !self.buffer.is_terminal() {
             if (self.color || self.indent_json) && content_type.is_text() {
@@ -537,7 +552,7 @@ mod tests {
         let buffer =
             Buffer::new(args.download, args.output.as_deref(), is_stdout_tty, None).unwrap();
         let pretty = args.pretty.unwrap_or_else(|| buffer.guess_pretty());
-        Printer::new(pretty, args.style, false, buffer)
+        Printer::new("hHbB".parse().unwrap(), pretty, args.style, false, buffer)
     }
 
     fn temp_path() -> String {
@@ -619,6 +634,7 @@ mod tests {
     #[test]
     fn test_header_casing() {
         let p = Printer {
+            print: "hHbB".parse().unwrap(),
             indent_json: false,
             color: false,
             theme: Theme::auto,
@@ -626,6 +642,7 @@ mod tests {
             stream: false,
             buffer: Buffer::new(false, None, false, Some(Pretty::none)).unwrap(),
         };
+
         let mut headers = HeaderMap::new();
         headers.insert("ab-cd", "0".parse().unwrap());
         headers.insert("-cd", "0".parse().unwrap());
@@ -637,10 +654,10 @@ mod tests {
             p.headers_to_string(&headers, reqwest::Version::HTTP_11),
             indoc! {"
                 Ab-Cd: 0
-                -cd: 0
+                -Cd: 0
                 -: 0
                 Ab-%c: 0
-                A-B--c: 0"
+                A-B--C: 0"
             }
         );
 
