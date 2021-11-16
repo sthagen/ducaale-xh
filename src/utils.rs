@@ -1,10 +1,19 @@
-use std::{
-    env::var_os,
-    io::{self, Write},
-    path::PathBuf,
-};
+use std::env::var_os;
+use std::io::{self, Write};
+use std::path::PathBuf;
 
+use anyhow::Result;
+use reqwest::blocking::Request;
 use url::{Host, Url};
+
+pub fn clone_request(request: &mut Request) -> Result<Request> {
+    if let Some(b) = request.body_mut().as_mut() {
+        b.buffer()?;
+    }
+    // This doesn't copy the contents of the buffer, cloning requests is cheap
+    // https://docs.rs/bytes/1.0.1/bytes/struct.Bytes.html
+    Ok(request.try_clone().unwrap()) // guaranteed to not fail if body is already buffered
+}
 
 /// Whether to make some things more deterministic for the benefit of tests
 pub fn test_mode() -> bool {
@@ -41,6 +50,15 @@ pub fn config_dir() -> Option<PathBuf> {
     }
 }
 
+pub fn get_home_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    if let Some(path) = std::env::var_os("XH_TEST_MODE_WIN_HOME_DIR") {
+        return Some(PathBuf::from(path));
+    }
+
+    dirs::home_dir()
+}
+
 // https://stackoverflow.com/a/45145246/5915221
 #[macro_export]
 macro_rules! vec_of_strings {
@@ -52,14 +70,12 @@ macro_rules! vec_of_strings {
 #[macro_export]
 macro_rules! regex {
     ($name:ident = $($re:expr)+) => {
-        lazy_static::lazy_static! {
-            static ref $name: regex::Regex = regex::Regex::new(concat!($($re,)+)).unwrap();
-        }
+        static $name: once_cell::sync::Lazy<regex::Regex> =
+            once_cell::sync::Lazy::new(|| regex::Regex::new(concat!($($re,)+)).unwrap());
     };
     ($($re:expr)+) => {{
-        lazy_static::lazy_static! {
-            static ref RE: regex::Regex = regex::Regex::new(concat!($($re,)+)).unwrap();
-        }
+        static RE: once_cell::sync::Lazy<regex::Regex> =
+            once_cell::sync::Lazy::new(|| regex::Regex::new(concat!($($re,)+)).unwrap());
         &RE
     }};
 }

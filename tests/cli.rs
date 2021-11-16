@@ -1,4 +1,5 @@
 #![cfg(feature = "integration-tests")]
+#![allow(clippy::bool_assert_comparison)]
 use std::{
     collections::HashSet,
     fs::File,
@@ -11,8 +12,7 @@ use std::{
 use assert_cmd::prelude::*;
 use httpmock::{HttpMockRequest, Method::*, MockServer};
 use indoc::{formatdoc, indoc};
-use predicate::str::contains;
-use predicates::prelude::*;
+use predicates::str::contains;
 use serde_json::json;
 use tempfile::{tempdir, tempfile};
 
@@ -309,7 +309,7 @@ fn proxy_https_proxy() {
 
     get_proxy_command("https", "https", &server.base_url())
         .assert()
-        .stderr(predicate::str::contains("unsuccessful tunnel"))
+        .stderr(contains("unsuccessful tunnel"))
         .failure();
     mock.assert();
 }
@@ -407,7 +407,7 @@ fn proxy_all_proxy() {
 
     get_proxy_command("https", "all", &server.base_url())
         .assert()
-        .stderr(predicate::str::contains("unsuccessful tunnel"))
+        .stderr(contains("unsuccessful tunnel"))
         .failure();
     mock.assert();
 
@@ -978,6 +978,75 @@ fn auto_nativetls() {
 }
 
 #[test]
+fn good_tls_version() {
+    get_command()
+        .arg("--ssl=tls1.2")
+        .arg("https://tls-v1-2.badssl.com:1012/")
+        .assert()
+        .success();
+}
+
+#[cfg(feature = "native-tls")]
+#[test]
+fn good_tls_version_nativetls() {
+    get_command()
+        .arg("--ssl=tls1.1")
+        .arg("--native-tls")
+        .arg("https://tls-v1-1.badssl.com:1011/")
+        .assert()
+        .success();
+}
+
+#[test]
+fn bad_tls_version() {
+    get_command()
+        .arg("--ssl=tls1.3")
+        .arg("https://tls-v1-2.badssl.com:1012/")
+        .assert()
+        .failure();
+}
+
+#[cfg(feature = "native-tls")]
+#[test]
+fn bad_tls_version_nativetls() {
+    get_command()
+        .arg("--ssl=tls1.1")
+        .arg("--native-tls")
+        .arg("https://tls-v1-2.badssl.com:1012/")
+        .assert()
+        .failure();
+}
+
+#[cfg(feature = "native-tls")]
+#[test]
+fn unsupported_tls_version_nativetls() {
+    get_command()
+        .arg("--ssl=tls1.3")
+        .arg("--native-tls")
+        .arg("https://example.org")
+        .assert()
+        .failure()
+        .stderr(contains("invalid minimum TLS version"))
+        .stderr(contains("running without the --native-tls"));
+}
+
+#[test]
+fn unsupported_tls_version_rustls() {
+    #[cfg(feature = "native-tls")]
+    const MSG: &str = "native-tls will be enabled";
+    #[cfg(not(feature = "native-tls"))]
+    const MSG: &str = "Consider building with the `native-tls` feature enabled";
+
+    get_command()
+        .arg("--offline")
+        .arg("--ssl=tls1.1")
+        .arg(":")
+        .assert()
+        .stderr(contains("rustls does not support older TLS versions"))
+        .stderr(contains(MSG));
+}
+
+#[test]
 fn forced_json() {
     let server = MockServer::start();
     let mock = server.mock(|when, _then| {
@@ -1129,7 +1198,7 @@ fn mixed_stdin_request_items() {
         .stdin(input_file)
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
+        .stderr(contains(
             "Request body (from stdin) and request data (key=value) cannot be mixed",
         ));
 }
@@ -1144,9 +1213,7 @@ fn multipart_stdin() {
         .stdin(input_file)
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "Cannot build a multipart request body from stdin",
-        ));
+        .stderr(contains("Cannot build a multipart request body from stdin"));
 }
 
 #[test]
@@ -1298,9 +1365,7 @@ fn no_double_file_body() {
         .arg("@bar")
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "Can't read request from multiple files",
-        ));
+        .stderr(contains("Can't read request from multiple files"));
 }
 
 #[test]
@@ -1321,7 +1386,7 @@ fn print_body_from_file() {
         .arg(format!("@{}", filename.to_string_lossy()))
         .assert()
         .success()
-        .stdout(predicate::str::contains("Hello world"));
+        .stdout(contains("Hello world"));
 }
 
 #[test]
@@ -1332,9 +1397,9 @@ fn colored_headers() {
         .assert()
         .success()
         // Color
-        .stdout(predicate::str::contains("\x1b[4m"))
+        .stdout(contains("\x1b[4m"))
         // Reset
-        .stdout(predicate::str::contains("\x1b[0m"));
+        .stdout(contains("\x1b[0m"));
 }
 
 #[test]
@@ -1345,7 +1410,7 @@ fn colored_body() {
         .arg("x:=3")
         .assert()
         .success()
-        .stdout(predicate::str::contains("\x1b[34m3\x1b[0m"));
+        .stdout(contains("\x1b[34m3\x1b[0m"));
 }
 
 #[test]
@@ -1358,7 +1423,7 @@ fn force_color_pipe() {
         .arg("x:=3")
         .assert()
         .success()
-        .stdout(predicate::str::contains("\x1b[34m3\x1b[0m"));
+        .stdout(contains("\x1b[34m3\x1b[0m"));
 }
 
 #[test]
@@ -1909,6 +1974,53 @@ fn bearer_auth_from_session_is_used() {
 }
 
 #[test]
+fn auth_netrc_is_not_persisted_in_session() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, _| {
+        when.header("Authorization", "Basic dXNlcjpwYXNz");
+    });
+
+    let mut path_to_session = std::env::temp_dir();
+    let file_name = random_string();
+    path_to_session.push(file_name);
+    assert_eq!(path_to_session.exists(), false);
+
+    let mut netrc = tempfile::NamedTempFile::new().unwrap();
+    writeln!(
+        netrc,
+        "machine {}\nlogin user\npassword pass",
+        server.host()
+    )
+    .unwrap();
+
+    get_command()
+        .env("NETRC", netrc.path())
+        .arg(server.base_url())
+        .arg("hello:world")
+        .arg(format!("--session={}", path_to_session.to_string_lossy()))
+        .assert()
+        .success();
+
+    mock.assert();
+
+    let session_content = read_to_string(path_to_session).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&session_content).unwrap(),
+        serde_json::json!({
+            "__meta__": {
+                "about": "xh session file",
+                "xh": "0.0.0"
+            },
+            "auth": { "type": null, "raw_auth": null },
+            "cookies": {},
+            "headers": {
+                "hello": "world"
+            }
+        })
+    );
+}
+
+#[test]
 fn print_intermediate_requests_and_responses() {
     let server1 = MockServer::start();
     let server2 = MockServer::start();
@@ -2027,9 +2139,7 @@ fn max_redirects_is_enforced() {
         .arg("--follow")
         .arg("--max-redirects=5")
         .assert()
-        .stderr(predicate::str::contains(
-            "Too many redirects (--max-redirects=5)",
-        ))
+        .stderr(contains("Too many redirects (--max-redirects=5)"))
         .failure();
 }
 
@@ -2195,4 +2305,218 @@ fn warns_if_config_is_invalid() {
         .assert()
         .stderr(contains("Unable to parse config file"))
         .success();
+}
+
+#[test]
+fn digest_auth() {
+    let server1 = MockServer::start();
+    let server2 = MockServer::start();
+    let mock1 = server1.mock(|when, then| {
+        when.matches(|req: &HttpMockRequest| {
+            !req.headers
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|(key, _)| key == "Authorization")
+        });
+        then.status(401).header("WWW-Authenticate", r#"Digest realm="me@xh.com", nonce="e5051361f053723a807674177fc7022f", qop="auth, auth-int", opaque="9dcf562038f1ec1c8d02f218ef0e7a4b", algorithm=MD5, stale=FALSE"#);
+    });
+    let mock2 = server2.mock(|when, then| {
+        when.header_exists("Authorization");
+        then.body("authenticated");
+    });
+
+    get_command()
+        .env("XH_TEST_DIGEST_AUTH_URL", server2.base_url())
+        .arg("--auth-type=digest")
+        .arg("--auth=ahmed:12345")
+        .arg(server1.base_url())
+        .assert()
+        .stdout(contains("HTTP/1.1 200 OK"));
+
+    mock1.assert();
+    mock2.assert();
+}
+
+#[test]
+fn successful_digest_auth() {
+    get_command()
+        .arg("--auth-type=digest")
+        .arg("--auth=ahmed:12345")
+        .arg("httpbin.org/digest-auth/5/ahmed/12345")
+        .assert()
+        .stdout(contains("HTTP/1.1 200 OK"));
+}
+
+#[test]
+fn unsuccessful_digest_auth() {
+    get_command()
+        .arg("--auth-type=digest")
+        .arg("--auth=ahmed:wrongpass")
+        .arg("httpbin.org/digest-auth/5/ahmed/12345")
+        .assert()
+        .stdout(contains("HTTP/1.1 401 Unauthorized"));
+}
+
+#[test]
+fn digest_auth_with_redirection() {
+    let server1 = MockServer::start();
+    let server2 = MockServer::start();
+    let server3 = MockServer::start();
+    let mock1 = server1.mock(|when, then| {
+        when.matches(|req: &HttpMockRequest| {
+            !req.headers
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|(key, _)| key == "Authorization")
+        });
+        then.status(401)
+            .header("WWW-Authenticate", r#"Digest realm="me@xh.com", nonce="e5051361f053723a807674177fc7022f", qop="auth, auth-int", opaque="9dcf562038f1ec1c8d02f218ef0e7a4b", algorithm=MD5, stale=FALSE"#)
+            .header("date", "N/A");
+    });
+    let mock2 = server2.mock(|when, then| {
+        when.header_exists("Authorization");
+        then.status(302)
+            .header("location", &server3.base_url())
+            .header("date", "N/A")
+            .body("authentication successful, redirecting...");
+    });
+    server3.mock(|_, then| {
+        then.header("date", "N/A").body("final destination");
+    });
+
+    get_command()
+        .env("XH_TEST_DIGEST_AUTH_URL", server2.base_url())
+        .env("XH_TEST_DIGEST_AUTH_CNONCE", "f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ")
+        .arg("--auth-type=digest")
+        .arg("--auth=ahmed:12345")
+        .arg("--follow")
+        .arg("--verbose")
+        .arg(server1.base_url())
+        .assert()
+        .stdout(formatdoc! {r#"
+            GET / HTTP/1.1
+            Accept: */*
+            Accept-Encoding: gzip, deflate, br
+            Connection: keep-alive
+            Host: http.mock
+            User-Agent: xh/0.0.0 (test mode)
+
+            HTTP/1.1 401 Unauthorized
+            Content-Length: 0
+            Date: N/A
+            Www-Authenticate: Digest realm="me@xh.com", nonce="e5051361f053723a807674177fc7022f", qop="auth, auth-int", opaque="9dcf562038f1ec1c8d02f218ef0e7a4b", algorithm=MD5, stale=FALSE
+
+
+
+            GET / HTTP/1.1
+            Accept: */*
+            Accept-Encoding: gzip, deflate, br
+            Authorization: Digest username="ahmed", realm="me@xh.com", nonce="e5051361f053723a807674177fc7022f", uri="/", qop=auth, nc=00000001, cnonce="f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ", response="1e96c9808de24d5dd36e9e4865ffca7d", opaque="9dcf562038f1ec1c8d02f218ef0e7a4b", algorithm=MD5
+            Connection: keep-alive
+            Host: http.mock
+            User-Agent: xh/0.0.0 (test mode)
+
+            HTTP/1.1 302 Found
+            Content-Length: 41
+            Date: N/A
+            Location: {redirect_url}
+
+            authentication successful, redirecting...
+
+            GET / HTTP/1.1
+            Accept: */*
+            Accept-Encoding: gzip, deflate, br
+            Connection: keep-alive
+            Host: http.mock
+            User-Agent: xh/0.0.0 (test mode)
+
+            HTTP/1.1 200 OK
+            Content-Length: 17
+            Date: N/A
+
+            final destination
+        "#, redirect_url = server3.base_url()});
+
+    mock1.assert();
+    mock2.assert();
+}
+
+#[test]
+fn http1_0() {
+    get_command()
+        .arg("--print=hH")
+        .arg("--http-version=1.0")
+        .arg("https://www.google.com")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("GET / HTTP/1.0"))
+        // Some servers i.e nginx respond with HTTP/1.1 to HTTP/1.0 requests, see https://serverfault.com/questions/442960/nginx-ignoring-clients-http-1-0-request-and-respond-by-http-1-1
+        // Fortunately, https://www.google.com is not one of those.
+        .stdout(predicates::str::contains("HTTP/1.0 200 OK"));
+}
+
+#[test]
+fn http1_1() {
+    get_command()
+        .arg("--print=hH")
+        .arg("--http-version=1.1")
+        .arg("https://www.google.com")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("GET / HTTP/1.1"))
+        .stdout(predicates::str::contains("HTTP/1.1 200 OK"));
+}
+
+#[test]
+fn http2() {
+    get_command()
+        .arg("--print=hH")
+        .arg("--http-version=2")
+        .arg("https://www.google.com")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("GET / HTTP/2.0"))
+        .stdout(predicates::str::contains("HTTP/2.0 200 OK"));
+}
+
+#[test]
+fn override_response_charset() {
+    let server = MockServer::start();
+    let mock = server.mock(|_when, then| {
+        then.header("Content-Type", "text/plain; charset=utf-8")
+            .body(b"\xe9");
+    });
+
+    get_command()
+        .arg("--print=b")
+        .arg("--response-charset=latin1")
+        .arg(server.base_url())
+        .assert()
+        .stdout("é\n");
+    mock.assert();
+}
+
+#[test]
+fn override_response_mime() {
+    let server = MockServer::start();
+    let mock = server.mock(|_when, then| {
+        then.header("Content-Type", "text/html; charset=utf-8")
+            .body("{\"status\": \"ok\"}");
+    });
+
+    get_command()
+        .arg("--print=b")
+        .arg("--response-mime=application/json")
+        .arg(server.base_url())
+        .assert()
+        .stdout(indoc! {r#"
+        {
+            "status": "ok"
+        }
+
+
+        "#});
+    mock.assert();
 }

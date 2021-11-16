@@ -4,12 +4,14 @@ mod buffer;
 mod cli;
 mod download;
 mod formatting;
+mod middleware;
 mod printer;
 mod redirect;
 mod request_items;
 mod session;
 mod to_curl;
 mod utils;
+mod vendored;
 
 use std::env;
 use std::fs::File;
@@ -20,20 +22,23 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use atty::Stream;
+use redirect::RedirectFollower;
 use reqwest::blocking::Client;
 use reqwest::header::{
-    HeaderValue, ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONNECTION, CONTENT_TYPE, COOKIE, RANGE,
-    USER_AGENT,
+    HeaderValue, ACCEPT, ACCEPT_ENCODING, CONNECTION, CONTENT_TYPE, COOKIE, RANGE, USER_AGENT,
 };
+use reqwest::tls;
 
-use crate::auth::{auth_from_netrc, parse_auth, read_netrc};
+use crate::auth::{read_netrc, Auth, DigestAuthMiddleware};
 use crate::buffer::Buffer;
-use crate::cli::{BodyType, Cli, Print, Proxy, Verify};
+use crate::cli::{BodyType, Cli, HttpVersion, Print, Proxy, Verify};
 use crate::download::{download_file, get_file_size};
+use crate::middleware::ClientWithMiddleware;
 use crate::printer::Printer;
 use crate::request_items::{Body, FORM_CONTENT_TYPE, JSON_ACCEPT, JSON_CONTENT_TYPE};
 use crate::session::Session;
 use crate::utils::{test_mode, test_pretend_term};
+use crate::vendored::reqwest_cookie_store;
 
 fn get_user_agent() -> &'static str {
     if test_mode() {
@@ -56,7 +61,8 @@ fn main() {
         }
         Err(err) => {
             eprintln!("{}: error: {:?}", bin_name, err);
-            if !native_tls && err.root_cause().to_string() == "invalid dnsname" {
+            let msg = err.root_cause().to_string();
+            if !native_tls && msg == "invalid dnsname" {
                 eprintln!();
                 if utils::url_requires_native_tls(&url) {
                     eprintln!("rustls does not support HTTPS for IP addresses.");
@@ -71,6 +77,10 @@ fn main() {
                 } else {
                     eprintln!("Consider building with the `native-tls` feature enabled.");
                 }
+            }
+            if native_tls && msg == "invalid minimum TLS version for backend" {
+                eprintln!();
+                eprintln!("Try running without the --native-tls flag.");
             }
             process::exit(1);
         }
@@ -119,6 +129,23 @@ fn run(args: Cli) -> Result<i32> {
         .redirect(reqwest::redirect::Policy::none())
         .timeout(timeout);
 
+    if let Some(Some(tls_version)) = args.ssl {
+        client = client
+            .min_tls_version(tls_version)
+            .max_tls_version(tls_version);
+
+        #[cfg(feature = "native-tls")]
+        if !args.native_tls && tls_version < tls::Version::TLS_1_2 {
+            warn("rustls does not support older TLS versions. native-tls will be enabled. Use --native-tls to silence this warning.");
+            client = client.use_native_tls();
+        }
+
+        #[cfg(not(feature = "native-tls"))]
+        if tls_version < tls::Version::TLS_1_2 {
+            warn("rustls does not support older TLS versions. Consider building with the `native-tls` feature enabled.");
+        }
+    }
+
     #[cfg(feature = "native-tls")]
     if args.native_tls {
         client = client.use_native_tls();
@@ -135,6 +162,8 @@ fn run(args: Cli) -> Result<i32> {
 
     let mut exit_code: i32 = 0;
     let mut resume: Option<u64> = None;
+    let mut auth = None;
+    let mut save_auth_in_session = true;
 
     if args.url.scheme() == "https" {
         let verify = args.verify.unwrap_or_else(|| {
@@ -218,8 +247,17 @@ fn run(args: Cli) -> Result<i32> {
         }?);
     }
 
+    if matches!(
+        args.http_version,
+        Some(HttpVersion::Http10) | Some(HttpVersion::Http11)
+    ) {
+        client = client.http1_only();
+    }
+
     let cookie_jar = Arc::new(reqwest_cookie_store::CookieStoreMutex::default());
     client = client.cookie_provider(cookie_jar.clone());
+
+    let client = client.build()?;
 
     let mut session = match &args.session {
         Some(name_or_path) => Some(
@@ -232,13 +270,9 @@ fn run(args: Cli) -> Result<i32> {
     };
 
     if let Some(ref mut s) = session {
+        auth = s.auth()?;
         for (key, value) in s.headers()?.iter() {
             headers.entry(key).or_insert_with(|| value.clone());
-        }
-        if let Some(auth) = s.auth()? {
-            headers
-                .entry(AUTHORIZATION)
-                .or_insert(HeaderValue::from_str(&auth)?);
         }
         s.save_headers(&headers)?;
 
@@ -256,8 +290,6 @@ fn run(args: Cli) -> Result<i32> {
         }
     }
 
-    let client = client.build()?;
-
     let mut request = {
         let mut request_builder = client
             .request(method, args.url.clone())
@@ -265,8 +297,22 @@ fn run(args: Cli) -> Result<i32> {
                 ACCEPT_ENCODING,
                 HeaderValue::from_static("gzip, deflate, br"),
             )
-            .header(CONNECTION, HeaderValue::from_static("keep-alive"))
             .header(USER_AGENT, get_user_agent());
+
+        if matches!(
+            args.http_version,
+            Some(HttpVersion::Http10) | Some(HttpVersion::Http11) | None
+        ) {
+            request_builder =
+                request_builder.header(CONNECTION, HeaderValue::from_static("keep-alive"));
+        }
+
+        request_builder = match args.http_version {
+            Some(HttpVersion::Http10) => request_builder.version(reqwest::Version::HTTP_10),
+            Some(HttpVersion::Http11) => request_builder.version(reqwest::Version::HTTP_11),
+            Some(HttpVersion::Http2) => request_builder.version(reqwest::Version::HTTP_2),
+            None => request_builder,
+        };
 
         request_builder = match body {
             Body::Form(body) => request_builder.form(&body),
@@ -317,26 +363,33 @@ fn run(args: Cli) -> Result<i32> {
             }
         }
 
-        if let Some(auth) = args.auth {
-            let (username, password) = parse_auth(auth, args.url.host_str().unwrap_or("<host>"))?;
-            if let Some(ref mut s) = session {
-                s.save_basic_auth(username.clone(), password.clone());
-            }
-            request_builder = request_builder.basic_auth(username, password);
+        let auth_type = args.auth_type.unwrap_or_default();
+        if let Some(auth_from_arg) = args.auth {
+            auth = Some(Auth::from_str(
+                &auth_from_arg,
+                auth_type,
+                args.url.host_str().unwrap_or("<host>"),
+            )?);
         } else if !args.ignore_netrc {
-            if let Some(host) = args.url.host_str() {
-                if let Some(netrc) = read_netrc() {
-                    if let Some((username, password)) = auth_from_netrc(host, &netrc) {
-                        request_builder = request_builder.basic_auth(username, password);
-                    }
-                }
+            if let (Some(host), Some(netrc)) = (args.url.host_str(), read_netrc()) {
+                auth = Auth::from_netrc(&netrc, auth_type, host);
+                save_auth_in_session = false;
             }
         }
-        if let Some(token) = args.bearer {
+
+        if let Some(auth) = &auth {
             if let Some(ref mut s) = session {
-                s.save_bearer_auth(token.clone())
+                if save_auth_in_session {
+                    s.save_auth(auth);
+                }
             }
-            request_builder = request_builder.bearer_auth(token);
+            request_builder = match auth {
+                Auth::Basic(username, password) => {
+                    request_builder.basic_auth(username, password.as_ref())
+                }
+                Auth::Bearer(token) => request_builder.bearer_auth(token),
+                Auth::Digest(..) => request_builder,
+            }
         }
 
         let mut request = request_builder.headers(headers).build()?;
@@ -373,30 +426,50 @@ fn run(args: Cli) -> Result<i32> {
         ),
     };
     let pretty = args.pretty.unwrap_or_else(|| buffer.guess_pretty());
-    let mut printer = Printer::new(print.clone(), pretty, args.style, args.stream, buffer);
+    let mut printer = Printer::new(pretty, args.style, args.stream, buffer);
 
-    printer.print_request_headers(&request, &*cookie_jar)?;
-    printer.print_request_body(&mut request)?;
+    let response_charset = args.response_charset;
+    let response_mime = args.response_mime.as_deref();
+
+    if print.request_headers {
+        printer.print_request_headers(&request, &*cookie_jar)?;
+    }
+    if print.request_body {
+        printer.print_request_body(&mut request)?;
+    }
 
     if !args.offline {
-        let response = if args.follow {
-            let mut client =
-                redirect::RedirectFollower::new(&client, args.max_redirects.unwrap_or(10));
-            if let Some(history_print) = args.history_print {
-                printer.print = history_print;
-            }
+        let response = {
+            let history_print = args.history_print.unwrap_or(print);
+            let mut client = ClientWithMiddleware::new(&client);
             if args.all {
-                client.on_redirect(|prev_response, next_request| {
-                    printer.print_response_headers(&prev_response)?;
-                    printer.print_response_body(prev_response)?;
-                    printer.print_separator()?;
-                    printer.print_request_headers(next_request, &*cookie_jar)?;
-                    printer.print_request_body(next_request)?;
+                client = client.with_printer(|prev_response, next_request| {
+                    if history_print.response_headers {
+                        printer.print_response_headers(&prev_response)?;
+                    }
+                    if history_print.response_body {
+                        printer.print_response_body(
+                            prev_response,
+                            response_charset,
+                            response_mime,
+                        )?;
+                        printer.print_separator()?;
+                    }
+                    if history_print.request_headers {
+                        printer.print_request_headers(next_request, &*cookie_jar)?;
+                    }
+                    if history_print.request_body {
+                        printer.print_request_body(next_request)?;
+                    }
                     Ok(())
                 });
             }
-            client.execute(request)?
-        } else {
+            if args.follow {
+                client = client.with(RedirectFollower::new(args.max_redirects.unwrap_or(10)));
+            }
+            if let Some(Auth::Digest(username, password)) = &auth {
+                client = client.with(DigestAuthMiddleware::new(username, password));
+            }
             client.execute(request)?
         };
 
@@ -413,8 +486,9 @@ fn run(args: Cli) -> Result<i32> {
             warn(&format!("HTTP {}", status));
         }
 
-        printer.print = print;
-        printer.print_response_headers(&response)?;
+        if print.response_headers {
+            printer.print_response_headers(&response)?;
+        }
         if args.download {
             if exit_code == 0 {
                 download_file(
@@ -427,7 +501,7 @@ fn run(args: Cli) -> Result<i32> {
                 )?;
             }
         } else {
-            printer.print_response_body(response)?;
+            printer.print_response_body(response, response_charset, response_mime)?;
         }
     }
 

@@ -1,6 +1,6 @@
 use std::convert::TryFrom;
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
 use std::io::Write;
@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
-use reqwest::{Method, Url};
+use anyhow::anyhow;
+use encoding_rs::Encoding;
+use reqwest::{tls, Method, Url};
 use serde::{Deserialize, Serialize};
 use structopt::clap::{self, arg_enum, AppSettings, Error, ErrorKind, Result};
 use structopt::StructOpt;
@@ -30,10 +32,12 @@ use crate::utils::config_dir;
 
 /// xh is a friendly and fast tool for sending HTTP requests.
 ///
-/// It reimplements as much as possible of HTTPie's excellent design.
+/// It reimplements as much as possible of HTTPie's excellent design, with a focus
+/// on improved performance.
 #[derive(StructOpt, Debug)]
 #[structopt(
     name = "xh",
+    long_version = long_version(),
     settings = &[
         AppSettings::DeriveDisplayOrder,
         AppSettings::UnifiedHelpMessage,
@@ -64,6 +68,20 @@ pub struct Cli {
     /// Output coloring style.
     #[structopt(short = "s", long, value_name = "THEME", possible_values = &Theme::variants(), case_insensitive = true)]
     pub style: Option<Theme>,
+
+    /// Override the response encoding for terminal display purposes.
+    ///
+    /// Example: `--response-charset=latin1`
+    /// {n}{n}{n}
+    #[structopt(long, value_name = "ENCODING", parse(try_from_str = parse_encoding))]
+    pub response_charset: Option<&'static Encoding>,
+
+    /// Override the response mime type for coloring and formatting for the terminal
+    ///
+    /// Example: `--response-mime=application/json`
+    /// {n}{n}{n}
+    #[structopt(long, value_name = "MIME_TYPE")]
+    pub response_mime: Option<String>,
 
     /// String specifying what the output should contain.
     ///
@@ -135,21 +153,22 @@ pub struct Cli {
     #[structopt(skip)]
     pub is_session_read_only: bool,
 
-    // Currently deprecated in favor of --bearer, un-hide if new auth types are introduced
     /// Specify the auth mechanism.
-    #[structopt(short = "A", long, possible_values = &AuthType::variants(),
-                default_value = "basic", case_insensitive = true, hidden = true)]
-    pub auth_type: AuthType,
+    #[structopt(short = "A", long, possible_values = &AuthType::variants(), case_insensitive = true)]
+    pub auth_type: Option<AuthType>,
 
-    /// Authenticate as USER with PASS. PASS will be prompted if missing.
+    /// Authenticate as USER with PASS or with TOKEN.
     ///
-    /// Use a trailing colon (i.e. `USER:`) to authenticate with just a username.
+    /// PASS will be prompted if missing. Use a trailing colon (i.e. `USER:`)
+    /// to authenticate with just a username.
+    ///
+    /// TOKEN is expected if `--auth-type=bearer`.
     /// {n}{n}{n}
-    #[structopt(short = "a", long, value_name = "USER[:PASS]")]
+    #[structopt(short = "a", long, value_name = "USER[:PASS] | TOKEN")]
     pub auth: Option<String>,
 
     /// Authenticate with a bearer token.
-    #[structopt(long, value_name = "TOKEN")]
+    #[structopt(long, value_name = "TOKEN", hidden = true)]
     pub bearer: Option<String>,
 
     /// Do not use credentials from .netrc
@@ -209,7 +228,7 @@ pub struct Cli {
     ///
     /// "false" instead of "no" also works. The default is "yes" ("true").
     /// {n}{n}{n}
-    #[structopt(long, value_name = "VERIFY")]
+    #[structopt(long, value_name = "VERIFY", parse(from_os_str))]
     pub verify: Option<Verify>,
 
     /// Use a client side certificate for SSL.
@@ -223,6 +242,16 @@ pub struct Cli {
     #[structopt(long, value_name = "FILE", parse(from_os_str))]
     pub cert_key: Option<PathBuf>,
 
+    /// Force a particular TLS version.
+    ///
+    /// "auto" or "ssl2.3" gives the default behavior of negotiating a version
+    /// with the server.
+    #[structopt(long, value_name = "VERSION", parse(from_str = parse_tls_version),
+      possible_values = &["auto", "ssl2.3", "tls1", "tls1.1", "tls1.2", "tls1.3"])]
+    // The nested option is weird, but parse_tls_version can return None.
+    // If the inner option doesn't use a qualified path structopt gets confused.
+    pub ssl: Option<std::option::Option<tls::Version>>,
+
     /// Use the system TLS library instead of rustls (if enabled at compile time).
     #[structopt(long)]
     pub native_tls: bool,
@@ -234,6 +263,10 @@ pub struct Cli {
     /// Make HTTPS requests if not specified in the URL.
     #[structopt(long)]
     pub https: bool,
+
+    /// HTTP version to use
+    #[structopt(long, value_name = "VERSION", possible_values = &["1", "1.0", "1.1", "2"])]
+    pub http_version: Option<HttpVersion>,
 
     /// Do not attempt to read stdin.
     #[structopt(short = "I", long)]
@@ -318,6 +351,7 @@ const NEGATION_FLAGS: &[&str] = &[
     "--no-form",
     "--no-headers",
     "--no-history-print",
+    "--no-http-version",
     "--no-https",
     "--no-ignore-netrc",
     "--no-ignore-stdin",
@@ -331,8 +365,11 @@ const NEGATION_FLAGS: &[&str] = &[
     "--no-print",
     "--no-proxy",
     "--no-quiet",
+    "--no-response-charset",
+    "--no-response-mime",
     "--no-session",
     "--no-session-read-only",
+    "--no-ssl",
     "--no-stream",
     "--no-style",
     "--no-timeout",
@@ -428,19 +465,18 @@ impl Cli {
             _ => {}
         }
         let mut rest_args = mem::take(&mut cli.raw_rest_args).into_iter();
-        let raw_url;
-        match parse_method(&cli.raw_method_or_url) {
+        let raw_url = match parse_method(&cli.raw_method_or_url) {
             Some(method) => {
                 cli.method = Some(method);
-                raw_url = rest_args.next().ok_or_else(|| {
+                rest_args.next().ok_or_else(|| {
                     Error::with_description("Missing URL", ErrorKind::MissingArgumentOrSubcommand)
-                })?;
+                })?
             }
             None => {
                 cli.method = None;
-                raw_url = mem::take(&mut cli.raw_method_or_url);
+                mem::take(&mut cli.raw_method_or_url)
             }
-        }
+        };
         for request_item in rest_args {
             cli.request_items.items.push(request_item.parse()?);
         }
@@ -499,8 +535,9 @@ impl Cli {
         if self.https {
             self.default_scheme = Some("https".to_string());
         }
-        if self.auth_type == AuthType::bearer && self.auth.is_some() {
-            self.bearer = self.auth.take();
+        if self.bearer.is_some() {
+            self.auth_type = Some(AuthType::bearer);
+            self.auth = self.bearer.take();
         }
         self.check_status = match (self.check_status_raw, matches.is_present("no-check-status")) {
             (true, true) => unreachable!(),
@@ -684,7 +721,13 @@ arg_enum! {
     #[allow(non_camel_case_types)]
     #[derive(Debug, PartialEq)]
     pub enum AuthType {
-        basic, bearer
+        basic, bearer, digest
+    }
+}
+
+impl Default for AuthType {
+    fn default() -> Self {
+        AuthType::basic
     }
 }
 
@@ -694,6 +737,19 @@ arg_enum! {
     #[derive(Debug, PartialEq, Clone, Copy)]
     pub enum Pretty {
         all, colors, format, none
+    }
+}
+
+/// The caller must check in advance if the string is valid. (structopt does this.)
+fn parse_tls_version(text: &str) -> Option<tls::Version> {
+    match text {
+        // ssl2.3 is not a real version but it's how HTTPie spells "auto"
+        "auto" | "ssl2.3" => None,
+        "tls1" => Some(tls::Version::TLS_1_0),
+        "tls1.1" => Some(tls::Version::TLS_1_1),
+        "tls1.2" => Some(tls::Version::TLS_1_2),
+        "tls1.3" => Some(tls::Version::TLS_1_3),
+        _ => unreachable!(),
     }
 }
 
@@ -725,7 +781,7 @@ impl Theme {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Print {
     pub request_headers: bool,
     pub request_body: bool,
@@ -789,8 +845,8 @@ impl Print {
 }
 
 impl FromStr for Print {
-    type Err = Error;
-    fn from_str(s: &str) -> Result<Print> {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> anyhow::Result<Print> {
         let mut request_headers = false;
         let mut request_body = false;
         let mut response_headers = false;
@@ -802,12 +858,7 @@ impl FromStr for Print {
                 'B' => request_body = true,
                 'h' => response_headers = true,
                 'b' => response_body = true,
-                char => {
-                    return Err(Error::with_description(
-                        &format!("{:?} is not a valid value", char),
-                        ErrorKind::InvalidValue,
-                    ))
-                }
+                char => return Err(anyhow!("{:?} is not a valid value", char)),
             }
         }
 
@@ -831,17 +882,12 @@ impl Timeout {
 }
 
 impl FromStr for Timeout {
-    type Err = Error;
+    type Err = anyhow::Error;
 
-    fn from_str(sec: &str) -> Result<Timeout> {
+    fn from_str(sec: &str) -> anyhow::Result<Timeout> {
         let pos_sec: f64 = match sec.parse::<f64>() {
             Ok(sec) if sec.is_sign_positive() => sec,
-            _ => {
-                return Err(Error::with_description(
-                    "Invalid seconds as connection timeout",
-                    ErrorKind::InvalidValue,
-                ))
-            }
+            _ => return Err(anyhow!("Invalid seconds as connection timeout")),
         };
 
         let dur = Duration::from_secs_f64(pos_sec);
@@ -857,19 +903,18 @@ pub enum Proxy {
 }
 
 impl FromStr for Proxy {
-    type Err = Error;
+    type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self> {
+    fn from_str(s: &str) -> anyhow::Result<Self> {
         let split_arg: Vec<&str> = s.splitn(2, ':').collect();
         match split_arg[..] {
             [protocol, url] => {
                 let url = reqwest::Url::try_from(url).map_err(|e| {
-                    Error::with_description(
-                        &format!(
-                            "Invalid proxy URL '{}' for protocol '{}': {}",
-                            url, protocol, e
-                        ),
-                        ErrorKind::InvalidValue,
+                    anyhow!(
+                        "Invalid proxy URL '{}' for protocol '{}': {}",
+                        url,
+                        protocol,
+                        e
                     )
                 })?;
 
@@ -877,15 +922,11 @@ impl FromStr for Proxy {
                     "http" => Ok(Proxy::Http(url)),
                     "https" => Ok(Proxy::Https(url)),
                     "all" => Ok(Proxy::All(url)),
-                    _ => Err(Error::with_description(
-                        &format!("Unknown protocol to set a proxy for: {}", protocol),
-                        ErrorKind::InvalidValue,
-                    )),
+                    _ => Err(anyhow!("Unknown protocol to set a proxy for: {}", protocol)),
                 }
             }
-            _ => Err(Error::with_description(
-                "The value passed to --proxy should be formatted as <PROTOCOL>:<PROXY_URL>",
-                ErrorKind::InvalidValue,
+            _ => Err(anyhow!(
+                "The value passed to --proxy should be formatted as <PROTOCOL>:<PROXY_URL>"
             )),
         }
     }
@@ -898,14 +939,16 @@ pub enum Verify {
     CustomCaBundle(PathBuf),
 }
 
-impl FromStr for Verify {
-    type Err = Error;
-    fn from_str(verify: &str) -> Result<Verify> {
-        match verify.to_lowercase().as_str() {
-            "no" | "false" => Ok(Verify::No),
-            "yes" | "true" => Ok(Verify::Yes),
-            path => Ok(Verify::CustomCaBundle(PathBuf::from(path))),
+impl From<&OsStr> for Verify {
+    fn from(verify: &OsStr) -> Verify {
+        if let Some(text) = verify.to_str() {
+            match text.to_lowercase().as_str() {
+                "no" | "false" => return Verify::No,
+                "yes" | "true" => return Verify::Yes,
+                _ => (),
+            }
         }
+        Verify::CustomCaBundle(PathBuf::from(verify))
     }
 }
 
@@ -932,11 +975,77 @@ impl Default for BodyType {
     }
 }
 
+#[derive(Debug)]
+pub enum HttpVersion {
+    Http10,
+    Http11,
+    Http2,
+}
+
+impl FromStr for HttpVersion {
+    type Err = Error;
+    fn from_str(version: &str) -> Result<HttpVersion> {
+        match version {
+            "1.0" => Ok(HttpVersion::Http10),
+            "1" | "1.1" => Ok(HttpVersion::Http11),
+            "2" => Ok(HttpVersion::Http2),
+            _ => unreachable!(),
+        }
+    }
+}
+
+// HTTPie recognizes some encoding names that encoding_rs doesn't e.g utf16 has to spelled as utf-16.
+// There are also some encodings which encoding_rs doesn't support but HTTPie does e.g utf-7.
+// See https://github.com/ducaale/xh/pull/184#pullrequestreview-787528027
+fn parse_encoding(encoding: &str) -> anyhow::Result<&'static Encoding> {
+    let normalized_encoding = encoding.to_lowercase().replace(
+        |c: char| (!c.is_alphanumeric() && c != '_' && c != '-' && c != ':'),
+        "",
+    );
+
+    match normalized_encoding.as_str() {
+        "u8" | "utf" => return Ok(encoding_rs::UTF_8),
+        "u16" => return Ok(encoding_rs::UTF_16LE),
+        _ => (),
+    }
+
+    for encoding in &[
+        &normalized_encoding,
+        &normalized_encoding.replace(&['-', '_'][..], ""),
+        &normalized_encoding.replace('_', "-"),
+        &normalized_encoding.replace('-', "_"),
+    ] {
+        if let Some(encoding) = Encoding::for_label(encoding.as_bytes()) {
+            return Ok(encoding);
+        }
+    }
+
+    {
+        let mut encoding = normalized_encoding.replace(&['-', '_'][..], "");
+        if let Some(first_digit_index) = encoding.find(|c: char| c.is_digit(10)) {
+            encoding.insert(first_digit_index, '-');
+            if let Some(encoding) = Encoding::for_label(encoding.as_bytes()) {
+                return Ok(encoding);
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "{} is not a supported encoding, please refer to https://encoding.spec.whatwg.org/#names-and-labels \
+         for supported encodings",
+        encoding
+    ))
+}
+
 /// Based on the function used by clap to abort
 fn safe_exit() -> ! {
     let _ = std::io::stdout().lock().flush();
     let _ = std::io::stderr().lock().flush();
     std::process::exit(0);
+}
+
+fn long_version() -> &'static str {
+    concat!(env!("CARGO_PKG_VERSION"), "\n", env!("XH_FEATURES"))
 }
 
 #[cfg(test)]
@@ -1016,29 +1125,6 @@ mod tests {
             cli.request_items.items,
             vec![RequestItem::DataField("foo".to_string(), "bar".to_string())]
         );
-    }
-
-    #[test]
-    fn auth() {
-        let cli = parse(&["--auth=user:pass", ":"]).unwrap();
-        assert_eq!(cli.auth.as_deref(), Some("user:pass"));
-        assert_eq!(cli.bearer, None);
-
-        let cli = parse(&["--auth=user:pass", "--auth-type=basic", ":"]).unwrap();
-        assert_eq!(cli.auth.as_deref(), Some("user:pass"));
-        assert_eq!(cli.bearer, None);
-
-        let cli = parse(&["--auth=token", "--auth-type=bearer", ":"]).unwrap();
-        assert_eq!(cli.auth, None);
-        assert_eq!(cli.bearer.as_deref(), Some("token"));
-
-        let cli = parse(&["--bearer=token", "--auth-type=bearer", ":"]).unwrap();
-        assert_eq!(cli.auth, None);
-        assert_eq!(cli.bearer.as_deref(), Some("token"));
-
-        let cli = parse(&["--auth-type=bearer", ":"]).unwrap();
-        assert_eq!(cli.auth, None);
-        assert_eq!(cli.bearer, None);
     }
 
     #[test]
@@ -1238,7 +1324,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(cli.bearer, None);
-        assert_eq!(cli.auth_type, AuthType::basic);
+        assert_eq!(cli.auth_type, None);
     }
 
     #[test]
@@ -1257,5 +1343,31 @@ mod tests {
 
         let cli = parse(&["--no-check-status", "--check-status", ":"]).unwrap();
         assert_eq!(cli.check_status, Some(true));
+    }
+
+    #[test]
+    fn parse_encoding_label() {
+        let test_cases = vec![
+            ("~~~~UtF////16@@", encoding_rs::UTF_16LE),
+            ("utf16", encoding_rs::UTF_16LE),
+            ("utf_16_be", encoding_rs::UTF_16BE),
+            ("utf16be", encoding_rs::UTF_16BE),
+            ("utf-16-be", encoding_rs::UTF_16BE),
+            ("utf_8", encoding_rs::UTF_8),
+            ("utf8", encoding_rs::UTF_8),
+            ("utf-8", encoding_rs::UTF_8),
+            ("u8", encoding_rs::UTF_8),
+            ("iso8859_6", encoding_rs::ISO_8859_6),
+            ("iso_8859-2:1987", encoding_rs::ISO_8859_2),
+            ("l1", encoding_rs::WINDOWS_1252),
+            ("elot-928", encoding_rs::ISO_8859_7),
+        ];
+
+        for (input, output) in test_cases {
+            assert_eq!(parse_encoding(input).unwrap(), output)
+        }
+
+        assert_eq!(parse_encoding("notreal").is_err(), true);
+        assert_eq!(parse_encoding("").is_err(), true);
     }
 }
