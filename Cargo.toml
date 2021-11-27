@@ -1,6 +1,6 @@
 [package]
 name = "xh"
-version = "0.14.0"
+version = "0.14.1"
 authors = ["ducaale <sharaf.13@hotmail.com>"]
 edition = "2018"
 license = "MIT"
@@ -14,8 +14,6 @@ exclude = ["assets/xhs", "assets/xhs.1.gz"]
 [dependencies]
 anyhow = "1.0.38"
 atty = "0.2"
-base64 = "0.13"
-bytes = "1.0.1"
 cookie_crate = { version = "0.15", package = "cookie" }
 cookie_store = { version = "0.15.0" }
 digest_auth = "0.3.0"
@@ -54,21 +52,21 @@ default-features = false
 features = ["parsing", "html", "yaml-load", "dump-load", "dump-create", "regex-onig"]
 
 [dev-dependencies]
-# Some are only needed for the `integration-tests` feature, but dev-dependencies can't be optional
 assert_cmd = "1.0"
 assert_matches = "1.4.0"
+form_urlencoded = "1.0.1"
 indoc = "1.0"
 predicates = "1.0.7"
-httpmock = "0.5.5"
-curl = { version = "0.4.34", features = ["static-ssl"] }
+hyper = { version = "0.14", features = ["server"] }
+tokio = { version = "1", features = ["rt", "sync", "time"] }
 tempfile = "3.2.0"
 
 [build-dependencies]
 syntect = { version = "4.4", default-features = false }
 
 [features]
-default = ["integration-tests"]
-integration-tests = []
+default = ["online-tests"]
+online-tests = []
 native-tls = ["reqwest/native-tls", "reqwest/native-tls-alpn"]
 
 [package.metadata.deb]
