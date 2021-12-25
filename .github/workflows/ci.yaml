@@ -29,6 +29,7 @@ jobs:
           - target: arm-unknown-linux-gnueabihf
             os: ubuntu-latest
             use-cross: true
+            flags: -- --test-threads=4
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -66,10 +67,10 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --tests -- -D warnings
+          args: --tests -- -D warnings -A unknown-lints
 
       - name: Clippy (all features)
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --all-features --tests -- -D warnings
+          args: --all-features --tests -- -D warnings -A unknown-lints
