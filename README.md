@@ -16,6 +16,13 @@ on improved performance.
 curl -sfL https://raw.githubusercontent.com/ducaale/xh/master/install.sh | sh
 ```
 
+### via Powershell (Windows)
+
+```
+iwr -useb https://raw.githubusercontent.com/ducaale/xh/master/install.ps1 | iex
+```
+
+
 ### via a package manager
 
 | OS              | Method     | Command                 |
@@ -49,13 +56,14 @@ OPTIONS:
     -j, --json                           (default) Serialize data items from the command line as a JSON object
     -f, --form                           Serialize data items from the command line as form fields
     -m, --multipart                      Like --form, but force a multipart/form-data request even without files
+        --raw <RAW>                      Pass raw request data without extra processing
         --pretty <STYLE>                 Controls output processing [possible values: all, colors, format, none]
-    -s, --style <THEME>                  Output coloring style [possible values: auto, solarized, monokai]
+    -s, --style <THEME>                  Output coloring style [possible values: auto, solarized, monokai, fruity]
         --response-charset <ENCODING>    Override the response encoding for terminal display purposes
         --response-mime <MIME_TYPE>      Override the response mime type for coloring and formatting for the terminal
     -p, --print <FORMAT>                 String specifying what the output should contain
-    -h, --headers                        Print only the response headers, shortcut for --print=h
-    -b, --body                           Print only the response body, Shortcut for --print=b
+    -h, --headers                        Print only the response headers. Shortcut for --print=h
+    -b, --body                           Print only the response body. Shortcut for --print=b
     -v, --verbose                        Print the whole request as well as the response
         --all                            Show any intermediary requests/responses while following redirects with --follow
     -P, --history-print <FORMAT>         The same as --print but applies only to intermediary requests/responses

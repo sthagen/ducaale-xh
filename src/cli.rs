@@ -61,6 +61,10 @@ pub struct Cli {
     #[structopt(short = "m", long, overrides_with_all = &["json", "form"])]
     pub multipart: bool,
 
+    /// Pass raw request data without extra processing.
+    #[structopt(long, value_name = "RAW")]
+    pub raw: Option<String>,
+
     /// Controls output processing.
     #[structopt(long, possible_values = &Pretty::variants(), case_insensitive = true, value_name = "STYLE")]
     pub pretty: Option<Pretty>,
@@ -93,11 +97,11 @@ pub struct Cli {
     #[structopt(short = "p", long, value_name = "FORMAT")]
     pub print: Option<Print>,
 
-    /// Print only the response headers, shortcut for --print=h.
+    /// Print only the response headers. Shortcut for --print=h.
     #[structopt(short = "h", long)]
     pub headers: bool,
 
-    /// Print only the response body, Shortcut for --print=b.
+    /// Print only the response body. Shortcut for --print=b.
     #[structopt(short = "b", long)]
     pub body: bool,
 
@@ -365,6 +369,7 @@ const NEGATION_FLAGS: &[&str] = &[
     "--no-print",
     "--no-proxy",
     "--no-quiet",
+    "--no-raw",
     "--no-response-charset",
     "--no-response-mime",
     "--no-session",
@@ -719,7 +724,7 @@ fn generate_completions(mut app: clap::App, rest_args: Vec<String>) -> Error {
 
 arg_enum! {
     #[allow(non_camel_case_types)]
-    #[derive(Debug, PartialEq)]
+    #[derive(Copy, Clone, Debug, PartialEq)]
     pub enum AuthType {
         basic, bearer, digest
     }
@@ -767,7 +772,7 @@ arg_enum! {
     #[allow(non_camel_case_types)]
     #[derive(Debug, PartialEq, Clone, Copy)]
     pub enum Theme {
-        auto, solarized, monokai
+        auto, solarized, monokai, fruity
     }
 }
 
@@ -777,6 +782,7 @@ impl Theme {
             Theme::auto => "ansi",
             Theme::solarized => "solarized",
             Theme::monokai => "monokai",
+            Theme::fruity => "fruity",
         }
     }
 }
@@ -994,9 +1000,20 @@ impl FromStr for HttpVersion {
     }
 }
 
-// HTTPie recognizes some encoding names that encoding_rs doesn't e.g utf16 has to spelled as utf-16.
-// There are also some encodings which encoding_rs doesn't support but HTTPie does e.g utf-7.
-// See https://github.com/ducaale/xh/pull/184#pullrequestreview-787528027
+/// HTTPie uses Python's str.decode(). That one's very accepting of different spellings.
+/// encoding_rs is not.
+///
+/// Python accepts `utf16` and `u16` (and even `~~~~UtF////16@@`), encoding_rs makes you
+/// spell it `utf-16`.
+///
+/// There are also some encodings which encoding_rs doesn't support but HTTPie does, e.g utf-7.
+///
+/// See https://github.com/ducaale/xh/pull/184#pullrequestreview-787528027
+///
+/// We interpret `utf-16` as LE (little-endian) UTF-16, but that's not quite right.
+/// In Python it turns on BOM sniffing: it defaults to LE (at least on LE machines)
+/// but if there's a byte order mark at the start of the document it may switch to
+/// BE instead.
 fn parse_encoding(encoding: &str) -> anyhow::Result<&'static Encoding> {
     let normalized_encoding = encoding.to_lowercase().replace(
         |c: char| (!c.is_alphanumeric() && c != '_' && c != '-' && c != ':'),

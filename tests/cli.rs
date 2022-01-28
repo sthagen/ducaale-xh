@@ -4,16 +4,15 @@ mod server;
 use std::collections::{HashMap, HashSet};
 use std::fs::{create_dir_all, read_to_string, File, OpenOptions};
 use std::future::Future;
-use std::io::{Seek, SeekFrom, Write};
+use std::io::Write;
 use std::iter::FromIterator;
 use std::pin::Pin;
-use std::process::Command;
 use std::time::Duration;
 
-use assert_cmd::prelude::*;
+use assert_cmd::cmd::Command;
 use indoc::indoc;
 use predicates::str::contains;
-use tempfile::{tempdir, tempfile};
+use tempfile::{tempdir, NamedTempFile, TempDir};
 
 pub trait RequestExt {
     fn query_params(&self) -> HashMap<String, String>;
@@ -83,6 +82,8 @@ fn get_base_command() -> Command {
         cmd = Command::new(path);
     }
     cmd.env("HOME", "");
+    cmd.env("NETRC", "");
+    cmd.env("XH_CONFIG_DIR", "");
     #[cfg(target_os = "windows")]
     cmd.env("XH_TEST_MODE_WIN_HOME_DIR", "");
     cmd
@@ -111,6 +112,13 @@ fn color_command() -> Command {
     cmd
 }
 
+const BINARY_SUPPRESSOR: &str = concat!(
+    "+-----------------------------------------+\n",
+    "| NOTE: binary data not shown in terminal |\n",
+    "+-----------------------------------------+\n",
+    "\n"
+);
+
 #[test]
 fn basic_json_post() {
     let server = server::http(|req| async move {
@@ -138,7 +146,6 @@ fn basic_json_post() {
 
 
         "#});
-    server.assert_hits(1);
 }
 
 #[test]
@@ -151,7 +158,6 @@ fn basic_get() {
         .args(&["--print=b", "get", &server.base_url()])
         .assert()
         .stdout("foobar\n\n");
-    server.assert_hits(1);
 }
 
 #[test]
@@ -164,7 +170,6 @@ fn basic_head() {
         .args(&["head", &server.base_url()])
         .assert()
         .success();
-    server.assert_hits(1);
 }
 
 #[test]
@@ -181,7 +186,6 @@ fn basic_options() {
         .assert()
         .stdout(contains("HTTP/1.1 200 OK"))
         .stdout(contains("Allow:"));
-    server.assert_hits(1);
 }
 
 #[test]
@@ -194,8 +198,8 @@ fn multiline_value() {
 
     get_command()
         .args(&["--form", "post", &server.base_url(), "foo=bar\nbaz"])
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -206,8 +210,8 @@ fn header() {
     });
     get_command()
         .args(&[&server.base_url(), "x-foo:Bar"])
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -220,7 +224,6 @@ fn query_param() {
         .args(&[&server.base_url(), "foo==bar"])
         .assert()
         .success();
-    server.assert_hits(1);
 }
 
 #[test]
@@ -231,8 +234,8 @@ fn json_param() {
     });
     get_command()
         .args(&[&server.base_url(), "foo:=[1,2,3]"])
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -275,7 +278,6 @@ fn verbose() {
 
             a body
         "#});
-    server.assert_hits(1);
 }
 
 #[test]
@@ -293,8 +295,8 @@ fn download() {
         .arg("--output")
         .arg(&outfile)
         .arg(server.base_url())
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
     assert_eq!(read_to_string(&outfile).unwrap(), "file contents\n");
 }
 
@@ -311,8 +313,8 @@ fn accept_encoding_not_modifiable_in_download_mode() {
     get_command()
         .current_dir(&dir)
         .args(&[&server.base_url(), "--download", "accept-encoding:gzip"])
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -328,12 +330,14 @@ fn download_generated_filename() {
     get_command()
         .args(&["--download", &server.url("/foo/bar/")])
         .current_dir(&dir)
-        .assert();
+        .assert()
+        .success();
 
     get_command()
         .args(&["--download", &server.url("/foo/bar/")])
         .current_dir(&dir)
-        .assert();
+        .assert()
+        .success();
 
     assert_eq!(read_to_string(dir.path().join("bar.json")).unwrap(), "file");
     assert_eq!(
@@ -355,8 +359,8 @@ fn download_supplied_filename() {
     get_command()
         .args(&["--download", &server.base_url()])
         .current_dir(&dir)
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
     assert_eq!(read_to_string(dir.path().join("foo.bar")).unwrap(), "file");
 }
 
@@ -373,8 +377,8 @@ fn download_supplied_unquoted_filename() {
     get_command()
         .args(&["--download", &server.base_url()])
         .current_dir(&dir)
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
     assert_eq!(
         read_to_string(dir.path().join("foo bar baz")).unwrap(),
         "file"
@@ -398,7 +402,6 @@ fn decode() {
         .args(&["--print=b", &server.base_url()])
         .assert()
         .stdout("é\n");
-    server.assert_hits(1);
 }
 
 #[test]
@@ -414,7 +417,6 @@ fn streaming_decode() {
         .args(&["--print=b", "--stream", &server.base_url()])
         .assert()
         .stdout("é\n");
-    server.assert_hits(1);
 }
 
 #[test]
@@ -433,7 +435,6 @@ fn only_decode_for_terminal() {
         .stdout
         .clone();
     assert_eq!(&output, b"\xe9"); // .stdout() doesn't support byte slices
-    server.assert_hits(1);
 }
 
 #[test]
@@ -448,7 +449,6 @@ fn do_decode_if_formatted() {
         .args(&["--pretty=all", &server.base_url()])
         .assert()
         .stdout("é");
-    server.assert_hits(1);
 }
 
 #[test]
@@ -468,7 +468,6 @@ fn never_decode_if_binary() {
         .stdout
         .clone();
     assert_eq!(&output, b"\xe9");
-    server.assert_hits(1);
 }
 
 #[test]
@@ -482,13 +481,7 @@ fn binary_detection() {
     get_command()
         .args(&["--print=b", &server.base_url()])
         .assert()
-        .stdout(indoc! {r#"
-            +-----------------------------------------+
-            | NOTE: binary data not shown in terminal |
-            +-----------------------------------------+
-
-        "#});
-    server.assert_hits(1);
+        .stdout(BINARY_SUPPRESSOR);
 }
 
 #[test]
@@ -502,23 +495,14 @@ fn streaming_binary_detection() {
     get_command()
         .args(&["--print=b", "--stream", &server.base_url()])
         .assert()
-        .stdout(indoc! {r#"
-            +-----------------------------------------+
-            | NOTE: binary data not shown in terminal |
-            +-----------------------------------------+
-
-        "#});
-    server.assert_hits(1);
+        .stdout(BINARY_SUPPRESSOR);
 }
 
 #[test]
 fn request_binary_detection() {
-    let mut binary_file = tempfile().unwrap();
-    binary_file.write_all(b"foo\0bar").unwrap();
-    binary_file.seek(SeekFrom::Start(0)).unwrap();
     redirecting_command()
         .args(&["--print=B", "--offline", ":"])
-        .stdin(binary_file)
+        .write_stdin(b"foo\0bar".as_ref())
         .assert()
         .stdout(indoc! {r#"
             +-----------------------------------------+
@@ -531,10 +515,11 @@ fn request_binary_detection() {
 
 #[test]
 fn timeout() {
-    let server = server::http(|_req| async move {
+    let mut server = server::http(|_req| async move {
         tokio::time::sleep(Duration::from_secs_f32(0.5)).await;
         hyper::Response::default()
     });
+    server.disable_hit_checks();
 
     get_command()
         .args(&["--timeout=0.1", &server.base_url()])
@@ -554,8 +539,6 @@ fn timeout_no_limit() {
         .args(&["--timeout=0", &server.base_url()])
         .assert()
         .success();
-
-    server.assert_hits(1);
 }
 
 #[test]
@@ -581,7 +564,6 @@ fn check_status() {
         .assert()
         .code(4)
         .stderr("");
-    server.assert_hits(1);
 }
 
 #[test]
@@ -598,7 +580,6 @@ fn check_status_warning() {
         .assert()
         .code(5)
         .stderr("xh: warning: HTTP 501 Not Implemented\n");
-    server.assert_hits(1);
 }
 
 #[test]
@@ -615,7 +596,6 @@ fn check_status_is_implied() {
         .assert()
         .code(4)
         .stderr("");
-    server.assert_hits(1);
 }
 
 #[test]
@@ -632,7 +612,6 @@ fn check_status_is_not_implied_in_compat_mode() {
         .arg(server.base_url())
         .assert()
         .code(0);
-    server.assert_hits(1);
 }
 
 #[test]
@@ -644,8 +623,8 @@ fn user_password_auth() {
 
     get_command()
         .args(&["--auth=user:pass", &server.base_url()])
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -657,8 +636,8 @@ fn user_auth() {
 
     get_command()
         .args(&["--auth=user:", &server.base_url()])
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -670,8 +649,8 @@ fn bearer_auth() {
 
     get_command()
         .args(&["--bearer=SomeToken", &server.base_url()])
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -822,7 +801,7 @@ fn netrc_env_user_password_auth() {
         hyper::Response::default()
     });
 
-    let mut netrc = tempfile::NamedTempFile::new().unwrap();
+    let mut netrc = NamedTempFile::new().unwrap();
     writeln!(
         netrc,
         "machine {}\nlogin user\npassword pass",
@@ -833,8 +812,8 @@ fn netrc_env_user_password_auth() {
     get_command()
         .env("NETRC", netrc.path())
         .arg(server.base_url())
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -845,7 +824,7 @@ fn netrc_file_user_password_auth() {
             hyper::Response::default()
         });
 
-        let homedir = tempfile::TempDir::new().unwrap();
+        let homedir = TempDir::new().unwrap();
         let netrc_path = homedir.path().join(netrc_file);
         let mut netrc = File::create(&netrc_path).unwrap();
         writeln!(
@@ -860,10 +839,10 @@ fn netrc_file_user_password_auth() {
         get_command()
             .env("HOME", homedir.path())
             .env("XH_TEST_MODE_WIN_HOME_DIR", homedir.path())
+            .env_remove("NETRC")
             .arg(server.base_url())
-            .assert();
-
-        server.assert_hits(1);
+            .assert()
+            .success();
 
         drop(netrc);
         homedir.close().unwrap();
@@ -894,8 +873,6 @@ fn proxy_http_proxy() {
     get_proxy_command("http", "http", &server.base_url())
         .assert()
         .success();
-
-    server.assert_hits(1);
 }
 
 #[test]
@@ -912,12 +889,26 @@ fn proxy_https_proxy() {
         .assert()
         .stderr(contains("unsuccessful tunnel"))
         .failure();
-
-    server.assert_hits(1);
 }
 
 #[test]
-fn proxy_all_proxy() {
+fn proxy_http_all_proxy() {
+    let server = server::http(|req| async move {
+        assert_eq!(req.method(), "GET");
+        hyper::Response::builder()
+            .status(502)
+            .body("".into())
+            .unwrap()
+    });
+
+    get_proxy_command("http", "all", &server.base_url())
+        .assert()
+        .stdout(contains("HTTP/1.1 502 Bad Gateway"))
+        .failure();
+}
+
+#[test]
+fn proxy_https_all_proxy() {
     let server = server::http(|req| async move {
         assert_eq!(req.method(), "CONNECT");
         hyper::Response::builder()
@@ -930,19 +921,11 @@ fn proxy_all_proxy() {
         .assert()
         .stderr(contains("unsuccessful tunnel"))
         .failure();
-
-    server.assert_hits(1);
-
-    get_proxy_command("http", "all", &server.base_url())
-        .assert()
-        .failure();
-
-    server.assert_hits(1);
 }
 
 #[test]
 fn last_supplied_proxy_wins() {
-    let first_server = server::http(|req| async move {
+    let mut first_server = server::http(|req| async move {
         assert_eq!(req.headers()["host"], "example.test");
         hyper::Response::builder()
             .status(500)
@@ -968,6 +951,7 @@ fn last_supplied_proxy_wins() {
     .assert()
     .success();
 
+    first_server.disable_hit_checks();
     first_server.assert_hits(0);
     second_server.assert_hits(1);
 }
@@ -1130,7 +1114,6 @@ fn improved_https_ip_error_with_support() {
         .failure()
         .stderr(contains("rustls does not support"))
         .stderr(contains("using the --native-tls flag"));
-    server.assert_hits(1);
 }
 
 #[cfg(feature = "native-tls")]
@@ -1225,7 +1208,6 @@ fn forced_json() {
         .args(&["--json", &server.base_url()])
         .assert()
         .success();
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1241,7 +1223,6 @@ fn forced_form() {
         .args(&["--form", &server.base_url()])
         .assert()
         .success();
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1256,7 +1237,6 @@ fn forced_multipart() {
         .args(&["--multipart", &server.base_url()])
         .assert()
         .success();
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1277,7 +1257,6 @@ fn formatted_json_output() {
 
 
         "#});
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1298,7 +1277,6 @@ fn inferred_json_output() {
 
 
         "#});
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1319,7 +1297,6 @@ fn inferred_json_javascript_output() {
 
 
         "#});
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1337,7 +1314,6 @@ fn inferred_nonjson_output() {
         .stdout(indoc! {r#"
             {"":0,}
         "#});
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1355,15 +1331,80 @@ fn noninferred_json_output() {
         .stdout(indoc! {r#"
             {"":0}
         "#});
-    server.assert_hits(1);
+}
+
+#[test]
+fn empty_body_defaults_to_get() {
+    let server = server::http(|req| async move {
+        assert_eq!(req.method(), "GET");
+        assert_eq!(req.body_as_string().await, "");
+        hyper::Response::default()
+    });
+
+    get_command().arg(server.base_url()).assert().success();
+}
+
+#[test]
+fn non_empty_body_defaults_to_post() {
+    let server = server::http(|req| async move {
+        assert_eq!(req.method(), "POST");
+        assert_eq!(req.body_as_string().await, "{\"x\":4}");
+        hyper::Response::default()
+    });
+
+    get_command()
+        .args(&[&server.base_url(), "x:=4"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn empty_raw_body_defaults_to_post() {
+    let server = server::http(|req| async move {
+        assert_eq!(req.method(), "POST");
+        assert_eq!(req.body_as_string().await, "");
+        hyper::Response::default()
+    });
+
+    redirecting_command()
+        .arg(server.base_url())
+        .write_stdin("")
+        .assert()
+        .success();
+}
+
+#[test]
+fn body_from_stdin() {
+    let server = server::http(|req| async move {
+        assert_eq!(req.body_as_string().await, "body from stdin");
+        hyper::Response::default()
+    });
+
+    redirecting_command()
+        .arg(server.base_url())
+        .write_stdin("body from stdin")
+        .assert()
+        .success();
+}
+
+#[test]
+fn body_from_raw() {
+    let server = server::http(|req| async move {
+        assert_eq!(req.body_as_string().await, "body from raw");
+        hyper::Response::default()
+    });
+
+    get_command()
+        .args(&["--raw=body from raw", &server.base_url()])
+        .assert()
+        .success();
 }
 
 #[test]
 fn mixed_stdin_request_items() {
-    let input_file = tempfile().unwrap();
     redirecting_command()
         .args(&["--offline", ":", "x=3"])
-        .stdin(input_file)
+        .write_stdin("")
         .assert()
         .failure()
         .stderr(contains(
@@ -1372,14 +1413,45 @@ fn mixed_stdin_request_items() {
 }
 
 #[test]
+fn mixed_stdin_raw() {
+    redirecting_command()
+        .args(&["--offline", "--raw=hello", ":"])
+        .write_stdin("")
+        .assert()
+        .failure()
+        .stderr(contains(
+            "Request body from stdin and --raw cannot be mixed",
+        ));
+}
+
+#[test]
+fn mixed_raw_request_items() {
+    get_command()
+        .args(&["--offline", "--raw=hello", ":", "x=3"])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "Request body (from --raw) and request data (key=value) cannot be mixed",
+        ));
+}
+
+#[test]
 fn multipart_stdin() {
-    let input_file = tempfile().unwrap();
     redirecting_command()
         .args(&["--offline", "--multipart", ":"])
-        .stdin(input_file)
+        .write_stdin("")
         .assert()
         .failure()
         .stderr(contains("Cannot build a multipart request body from stdin"));
+}
+
+#[test]
+fn multipart_raw() {
+    get_command()
+        .args(&["--offline", "--raw=hello", "--multipart", ":"])
+        .assert()
+        .failure()
+        .stderr(contains("Cannot build a multipart request body from --raw"));
 }
 
 #[test]
@@ -1388,13 +1460,11 @@ fn default_json_for_raw_body() {
         assert_eq!(req.headers()["content-type"], "application/json");
         hyper::Response::default()
     });
-    let input_file = tempfile().unwrap();
     redirecting_command()
         .arg(server.base_url())
-        .stdin(input_file)
+        .write_stdin("")
         .assert()
         .success();
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1440,8 +1510,6 @@ fn multipart_file_upload() {
         ))
         .assert()
         .success();
-
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1467,8 +1535,6 @@ fn body_from_file() {
         .arg(format!("@{}", filename.to_string_lossy()))
         .assert()
         .success();
-
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1494,8 +1560,6 @@ fn body_from_file_with_explicit_mimetype() {
         .arg(format!("@{};type=image/png", filename.to_string_lossy()))
         .assert()
         .success();
-
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1521,8 +1585,6 @@ fn body_from_file_with_fallback_mimetype() {
         .arg(format!("@{}", filename.to_string_lossy()))
         .assert()
         .success();
-
-    server.assert_hits(1);
 }
 
 #[test]
@@ -1598,8 +1660,8 @@ fn request_json_keys_order_is_preserved() {
 
     get_command()
         .args(&["get", &server.base_url(), "name=ali", "age:=24"])
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -1609,14 +1671,14 @@ fn data_field_from_file() {
         hyper::Response::default()
     });
 
-    let mut text_file = tempfile::NamedTempFile::new().unwrap();
+    let mut text_file = NamedTempFile::new().unwrap();
     write!(text_file, "[1,2,3]").unwrap();
 
     get_command()
         .arg(server.base_url())
         .arg(format!("ids=@{}", text_file.path().to_string_lossy()))
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -1626,15 +1688,15 @@ fn data_field_from_file_in_form_mode() {
         hyper::Response::default()
     });
 
-    let mut text_file = tempfile::NamedTempFile::new().unwrap();
+    let mut text_file = NamedTempFile::new().unwrap();
     write!(text_file, "hello world").unwrap();
 
     get_command()
         .arg(server.base_url())
         .arg("--form")
         .arg(format!("message=@{}", text_file.path().to_string_lossy()))
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -1644,14 +1706,14 @@ fn json_field_from_file() {
         hyper::Response::default()
     });
 
-    let mut json_file = tempfile::NamedTempFile::new().unwrap();
+    let mut json_file = NamedTempFile::new().unwrap();
     writeln!(json_file, "[1,2,3]").unwrap();
 
     get_command()
         .arg(server.base_url())
         .arg(format!("ids:=@{}", json_file.path().to_string_lossy()))
-        .assert();
-    server.assert_hits(1);
+        .assert()
+        .success();
 }
 
 #[test]
@@ -1803,7 +1865,7 @@ fn anonymous_read_only_session() {
             .unwrap()
     });
 
-    let session_file = tempfile::NamedTempFile::new().unwrap();
+    let session_file = NamedTempFile::new().unwrap();
     let old_session_content = serde_json::json!({
         "__meta__": { "about": "xh session file", "xh": "0.0.0" },
         "auth": { "type": null, "raw_auth": null },
@@ -1933,7 +1995,7 @@ fn expired_cookies_are_removed_from_session() {
         + 1000;
     let past_timestamp = 1114425967; // 2005-04-25
 
-    let session_file = tempfile::NamedTempFile::new().unwrap();
+    let session_file = NamedTempFile::new().unwrap();
 
     std::fs::write(
         &session_file,
@@ -2010,7 +2072,7 @@ fn cookies_override_each_other_in_the_correct_order() {
             .unwrap()
     });
 
-    let session_file = tempfile::NamedTempFile::new().unwrap();
+    let session_file = NamedTempFile::new().unwrap();
 
     std::fs::write(
         &session_file,
@@ -2063,7 +2125,7 @@ fn basic_auth_from_session_is_used() {
         hyper::Response::default()
     });
 
-    let session_file = tempfile::NamedTempFile::new().unwrap();
+    let session_file = NamedTempFile::new().unwrap();
 
     std::fs::write(
         &session_file,
@@ -2086,8 +2148,6 @@ fn basic_auth_from_session_is_used() {
         .arg("--no-check-status")
         .assert()
         .success();
-
-    server.assert_hits(1);
 }
 
 #[test]
@@ -2097,7 +2157,7 @@ fn bearer_auth_from_session_is_used() {
         hyper::Response::default()
     });
 
-    let session_file = tempfile::NamedTempFile::new().unwrap();
+    let session_file = NamedTempFile::new().unwrap();
 
     std::fs::write(
         &session_file,
@@ -2120,8 +2180,6 @@ fn bearer_auth_from_session_is_used() {
         .arg("--no-check-status")
         .assert()
         .success();
-
-    server.assert_hits(1);
 }
 
 #[test]
@@ -2136,7 +2194,7 @@ fn auth_netrc_is_not_persisted_in_session() {
     path_to_session.push(file_name);
     assert_eq!(path_to_session.exists(), false);
 
-    let mut netrc = tempfile::NamedTempFile::new().unwrap();
+    let mut netrc = NamedTempFile::new().unwrap();
     writeln!(
         netrc,
         "machine {}\nlogin user\npassword pass",
@@ -2430,7 +2488,7 @@ fn request_body_is_buffered_for_307_redirect() {
         }
     });
 
-    let mut file = tempfile::NamedTempFile::new().unwrap();
+    let mut file = NamedTempFile::new().unwrap();
     writeln!(file, "hello world").unwrap();
 
     get_command()
@@ -2536,7 +2594,6 @@ fn override_response_charset() {
         .arg(server.base_url())
         .assert()
         .stdout("é\n");
-    server.assert_hits(1);
 }
 
 #[test]
@@ -2560,7 +2617,6 @@ fn override_response_mime() {
 
 
         "#});
-    server.assert_hits(1);
 }
 
 #[test]
@@ -2582,5 +2638,114 @@ fn omit_response_body() {
             Date: N/A
 
         "#});
-    server.assert_hits(1);
+}
+
+#[test]
+fn encoding_detection() {
+    fn case(
+        content_type: &'static str,
+        body: &'static (impl AsRef<[u8]> + ?Sized),
+        output: &'static str,
+    ) {
+        let body = body.as_ref();
+        let server = server::http(move |_| async move {
+            hyper::Response::builder()
+                .header("Content-Type", content_type)
+                .body(body.into())
+                .unwrap()
+        });
+
+        get_command()
+            .arg("--print=b")
+            .arg(server.base_url())
+            .assert()
+            .stdout(output);
+
+        get_command()
+            .arg("--print=b")
+            .arg("--stream")
+            .arg(server.base_url())
+            .assert()
+            .stdout(output);
+
+        server.assert_hits(2);
+    }
+
+    // UTF-8 is a typical fallback
+    case("text/plain", "é", "é\n");
+
+    // But headers take precedence
+    case("text/html; charset=latin1", "é", "Ã©\n");
+
+    // As do BOMs
+    case("text/html", b"\xFF\xFEa\0b\0", "ab\n");
+
+    // windows-1252 is another common fallback
+    case("text/plain", b"\xFF", "ÿ\n");
+
+    // BOMs are stripped
+    case("text/plain", b"\xFF\xFEa\0b\0", "ab\n");
+    case("text/plain; charset=UTF-16", b"\xFF\xFEa\0b\0", "ab\n");
+    case("text/plain; charset=UTF-16LE", b"\xFF\xFEa\0b\0", "ab\n");
+    case("text/plain", b"\xFE\xFF\0a\0b", "ab\n");
+    case("text/plain; charset=UTF-16BE", b"\xFE\xFF\0a\0b", "ab\n");
+
+    // ...unless they're for a different encoding
+    case(
+        "text/plain; charset=UTF-16LE",
+        b"\xFE\xFFa\0b\0",
+        "\u{FFFE}ab\n",
+    );
+    case(
+        "text/plain; charset=UTF-16BE",
+        b"\xFF\xFE\0a\0b",
+        "\u{FFFE}ab\n",
+    );
+
+    // Binary content is detected
+    case("application/octet-stream", "foo\0bar", BINARY_SUPPRESSOR);
+
+    // (even for non-ASCII-compatible encodings)
+    case("text/plain; charset=UTF-16", "\0\0", BINARY_SUPPRESSOR);
+}
+
+#[test]
+fn tilde_expanded_in_request_items() {
+    let homedir = TempDir::new().unwrap();
+
+    std::fs::write(homedir.path().join("secret_key.txt"), "sxemfalm.....").unwrap();
+    get_command()
+        .env("HOME", homedir.path())
+        .env("XH_TEST_MODE_WIN_HOME_DIR", homedir.path())
+        .args(&["--offline", ":", "key=@~/secret_key.txt"])
+        .assert()
+        .stdout(contains("sxemfalm....."))
+        .success();
+
+    std::fs::write(homedir.path().join("ids.json"), "[102,111,164]").unwrap();
+    get_command()
+        .env("HOME", homedir.path())
+        .env("XH_TEST_MODE_WIN_HOME_DIR", homedir.path())
+        .args(&["--offline", "--pretty=none", ":", "ids:=@~/ids.json"])
+        .assert()
+        .stdout(contains("[102,111,164]"))
+        .success();
+
+    std::fs::write(homedir.path().join("moby-dick.txt"), "Call me Ishmael.").unwrap();
+    get_command()
+        .env("HOME", homedir.path())
+        .env("XH_TEST_MODE_WIN_HOME_DIR", homedir.path())
+        .args(&["--offline", "--form", ":", "content@~/moby-dick.txt"])
+        .assert()
+        .stdout(contains("Call me Ishmael."))
+        .success();
+
+    std::fs::write(homedir.path().join("random_file"), "random data").unwrap();
+    get_command()
+        .env("HOME", homedir.path())
+        .env("XH_TEST_MODE_WIN_HOME_DIR", homedir.path())
+        .args(&["--offline", ":", "@~/random_file"])
+        .assert()
+        .stdout(contains("random data"))
+        .success();
 }

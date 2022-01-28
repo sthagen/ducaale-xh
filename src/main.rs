@@ -5,6 +5,7 @@ mod cli;
 mod download;
 mod formatting;
 mod middleware;
+mod netrc;
 mod printer;
 mod redirect;
 mod request_items;
@@ -29,7 +30,7 @@ use reqwest::header::{
 };
 use reqwest::tls;
 
-use crate::auth::{read_netrc, Auth, DigestAuthMiddleware};
+use crate::auth::{Auth, DigestAuthMiddleware};
 use crate::buffer::Buffer;
 use crate::cli::{BodyType, Cli, HttpVersion, Print, Proxy, Verify};
 use crate::download::{download_file, get_file_size};
@@ -100,12 +101,29 @@ fn run(args: Cli) -> Result<i32> {
 
     let (mut headers, headers_to_unset) = args.request_items.headers()?;
 
-    let ignore_stdin = args.ignore_stdin || atty::is(Stream::Stdin) || test_pretend_term();
+    let use_stdin = !(args.ignore_stdin || atty::is(Stream::Stdin) || test_pretend_term());
     let body_type = args.request_items.body_type;
-    let mut body = args.request_items.body()?;
-    if !ignore_stdin {
-        if !body.is_empty() {
-            if body.is_multipart() {
+    let body_from_request_items = args.request_items.body()?;
+    let has_request_items = !body_from_request_items.is_empty();
+
+    let body = match (use_stdin, args.raw, has_request_items) {
+        (true, None, false) => {
+            let mut buffer = Vec::new();
+            stdin().read_to_end(&mut buffer)?;
+            Body::Raw(buffer)
+        }
+        (false, Some(raw), false) => Body::Raw(raw.into_bytes()),
+        (false, None, _) => body_from_request_items,
+
+        (true, Some(_), _) => {
+            return Err(anyhow!(
+                "Request body from stdin and --raw cannot be mixed. \
+                Pass --ignore-stdin to ignore standard input."
+            ))
+        }
+        (true, _, true) => {
+            if args.multipart {
+                // Multipart bodies are never "empty", so we can get here without request items
                 return Err(anyhow!("Cannot build a multipart request body from stdin"));
             } else {
                 return Err(anyhow!(
@@ -114,10 +132,17 @@ fn run(args: Cli) -> Result<i32> {
                 ));
             }
         }
-        let mut buffer = Vec::new();
-        stdin().read_to_end(&mut buffer)?;
-        body = Body::Raw(buffer);
-    }
+        (_, Some(_), true) => {
+            if args.multipart {
+                // Multipart bodies are never "empty", so we can get here without request items
+                return Err(anyhow!("Cannot build a multipart request body from --raw"));
+            } else {
+                return Err(anyhow!(
+                    "Request body (from --raw) and request data (key=value) cannot be mixed."
+                ));
+            }
+        }
+    };
 
     let method = args.method.unwrap_or_else(|| body.pick_method());
     let timeout = args.timeout.and_then(|t| t.as_duration());
@@ -370,9 +395,12 @@ fn run(args: Cli) -> Result<i32> {
                 auth_type,
                 args.url.host_str().unwrap_or("<host>"),
             )?);
-        } else if !args.ignore_netrc {
-            if let (Some(host), Some(netrc)) = (args.url.host_str(), read_netrc()) {
-                auth = Auth::from_netrc(&netrc, auth_type, host);
+        } else if !args.ignore_netrc && Auth::supports_netrc(auth_type) {
+            // I don't know if it's possible for host() to return None
+            // But if it does we still want to use the default entry, if there is one
+            let host = args.url.host().unwrap_or(url::Host::Domain(""));
+            if let Some(entry) = netrc::find_entry(host) {
+                auth = Auth::from_netrc(auth_type, entry);
                 save_auth_in_session = false;
             }
         }
