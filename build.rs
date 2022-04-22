@@ -2,7 +2,7 @@ use std::env;
 use std::fs::read_dir;
 use std::path::Path;
 
-use syntect::dumps::*;
+use syntect::dumps::dump_to_file;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSetBuilder;
 
@@ -17,7 +17,7 @@ fn build_syntax(dir: &str, out: &str) {
 fn feature_status(feature: &str) -> String {
     if env::var_os(format!(
         "CARGO_FEATURE_{}",
-        feature.to_uppercase().replace("-", "_")
+        feature.to_uppercase().replace('-', "_")
     ))
     .is_some()
     {
