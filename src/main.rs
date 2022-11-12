@@ -6,6 +6,7 @@ mod decoder;
 mod download;
 mod formatting;
 mod middleware;
+mod nested_json;
 mod netrc;
 mod printer;
 mod redirect;
@@ -18,8 +19,10 @@ mod vendored;
 use std::env;
 use std::fs::File;
 use std::io::{stdin, Read};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::process;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
@@ -41,6 +44,9 @@ use crate::request_items::{Body, FORM_CONTENT_TYPE, JSON_ACCEPT, JSON_CONTENT_TY
 use crate::session::Session;
 use crate::utils::{test_mode, test_pretend_term};
 use crate::vendored::reqwest_cookie_store;
+
+#[cfg(not(any(feature = "native-tls", feature = "rustls")))]
+compile_error!("Either native-tls or rustls feature must be enabled!");
 
 fn get_user_agent() -> &'static str {
     if test_mode() {
@@ -158,13 +164,17 @@ fn run(args: Cli) -> Result<i32> {
 
     let mut client = Client::builder()
         .http1_title_case_headers()
-        .use_rustls_tls()
         .http2_adaptive_window(true)
         .redirect(reqwest::redirect::Policy::none())
         .timeout(timeout)
         .no_gzip()
         .no_deflate()
         .no_brotli();
+
+    #[cfg(feature = "rustls")]
+    if !args.native_tls {
+        client = client.use_rustls_tls();
+    }
 
     if let Some(Some(tls_version)) = args.ssl {
         client = client
@@ -245,6 +255,7 @@ fn run(args: Cli) -> Result<i32> {
             }
         };
 
+        #[cfg(feature = "rustls")]
         if let Some(cert) = args.cert {
             if args.native_tls {
                 // Unlike the --verify case this is advertised to not work, so it's
@@ -274,6 +285,12 @@ fn run(args: Cli) -> Result<i32> {
                 .context("Failed to load the cert/cert key files")?;
             client = client.identity(identity);
         };
+        #[cfg(not(feature = "rustls"))]
+        if args.cert.is_some() {
+            // Unlike the --verify case this is advertised to not work, so it's
+            // not an outright bug, but it's still imaginable that it'll start working
+            warn("Client certificates are not supported for native-tls and this binary was built without rustls support");
+        };
     }
 
     for proxy in args.proxy.into_iter().rev() {
@@ -293,6 +310,12 @@ fn run(args: Cli) -> Result<i32> {
 
     let cookie_jar = Arc::new(reqwest_cookie_store::CookieStoreMutex::default());
     client = client.cookie_provider(cookie_jar.clone());
+
+    client = match (args.ipv4, args.ipv6) {
+        (true, false) => client.local_address(IpAddr::from_str("0.0.0.0")?),
+        (false, true) => client.local_address(IpAddr::from_str("::")?),
+        _ => client,
+    };
 
     let client = client.build()?;
 
@@ -355,9 +378,9 @@ fn run(args: Cli) -> Result<i32> {
             Body::Form(body) => request_builder.form(&body),
             Body::Multipart(body) => request_builder.multipart(body),
             Body::Json(body) => {
-                // An empty JSON body would produce "{}" instead of "", so
-                // this is the one kind of body that needs an is_empty() check
-                if !body.is_empty() {
+                // An empty JSON body would produce null instead of "", so
+                // this is the one kind of body that needs an is_null() check
+                if !body.is_null() {
                     request_builder
                         .header(ACCEPT, HeaderValue::from_static(JSON_ACCEPT))
                         .json(&body)
@@ -407,7 +430,7 @@ fn run(args: Cli) -> Result<i32> {
                 auth_type,
                 args.url.host_str().unwrap_or("<host>"),
             )?);
-        } else if !args.ignore_netrc && Auth::supports_netrc(auth_type) {
+        } else if !args.ignore_netrc {
             // I don't know if it's possible for host() to return None
             // But if it does we still want to use the default entry, if there is one
             let host = args.url.host().unwrap_or(url::Host::Domain(""));
