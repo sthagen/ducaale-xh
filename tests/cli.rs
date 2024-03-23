@@ -1698,6 +1698,7 @@ fn multipart_file_upload() {
     let filename = dir.path().join("input.txt");
     OpenOptions::new()
         .create(true)
+        .truncate(true)
         .write(true)
         .open(&filename)
         .unwrap()
@@ -1728,6 +1729,7 @@ fn body_from_file() {
     let filename = dir.path().join("input.txt");
     OpenOptions::new()
         .create(true)
+        .truncate(true)
         .write(true)
         .open(&filename)
         .unwrap()
@@ -1753,6 +1755,7 @@ fn body_from_file_with_explicit_mimetype() {
     let filename = dir.path().join("input.txt");
     OpenOptions::new()
         .create(true)
+        .truncate(true)
         .write(true)
         .open(&filename)
         .unwrap()
@@ -1778,6 +1781,7 @@ fn body_from_file_with_fallback_mimetype() {
     let filename = dir.path().join("input");
     OpenOptions::new()
         .create(true)
+        .truncate(true)
         .write(true)
         .open(&filename)
         .unwrap()
@@ -1806,6 +1810,7 @@ fn print_body_from_file() {
     let filename = dir.path().join("input");
     OpenOptions::new()
         .create(true)
+        .truncate(true)
         .write(true)
         .open(&filename)
         .unwrap()
@@ -3051,6 +3056,20 @@ fn http2() {
         .success()
         .stdout(contains("GET / HTTP/2.0"))
         .stdout(contains("HTTP/2.0 200 OK"));
+}
+
+#[cfg(feature = "online-tests")]
+#[test]
+fn http2_prior_knowledge() {
+    get_command()
+        .args([
+            "--print=hH",
+            "--http-version=2-prior-knowledge",
+            "http://x.com",
+        ])
+        .assert()
+        .stdout(contains("GET / HTTP/2.0"))
+        .stdout(contains("HTTP/2.0 "));
 }
 
 #[test]
