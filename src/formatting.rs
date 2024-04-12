@@ -17,6 +17,19 @@ pub fn get_json_formatter(indent_level: usize) -> jsonxf::Formatter {
     fmt
 }
 
+/// Format a JSON value using serde. Unlike jsonxf this decodes escaped Unicode values.
+///
+/// Note that if parsing fails this function will stop midway through and return an error.
+/// It should only be used with known-valid JSON.
+pub fn serde_json_format(indent_level: usize, text: &str, write: impl Write) -> io::Result<()> {
+    let indent = " ".repeat(indent_level);
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
+    let mut serializer = serde_json::Serializer::with_formatter(write, formatter);
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    serde_transcode::transcode(&mut deserializer, &mut serializer)?;
+    Ok(())
+}
+
 static TS: once_cell::sync::Lazy<ThemeSet> = once_cell::sync::Lazy::new(|| {
     from_binary(include_bytes!(concat!(
         env!("OUT_DIR"),
