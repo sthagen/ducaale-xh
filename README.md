@@ -43,7 +43,7 @@ iwr -useb https://raw.githubusercontent.com/ducaale/xh/master/install.ps1 | iex
 | Windows                       | Chocolatey | `choco install xh`                         |
 | Windows                       | Winget     | `winget add ducaale.xh`                    |
 
-\* Make sure that you have Rust 1.70 or later installed
+\* Make sure that you have Rust 1.74 or later installed
 
 \*\* You will need to install the [MMRL CLI](https://github.com/DerGoogler/MMRL-CLI/releases)
 
@@ -105,7 +105,7 @@ Options:
       --cert-key <FILE>                  A private key file to use with --cert
       --ssl <VERSION>                    Force a particular TLS version [possible values: auto, tls1, tls1.1, tls1.2, tls1.3]
       --https                            Make HTTPS requests if not specified in the URL
-      --http-version <VERSION>           HTTP version to use [possible values: 1.0, 1.1, 2]
+      --http-version <VERSION>           HTTP version to use [possible values: 1.0, 1.1, 2, 2-prior-knowledge]
       --resolve <HOST:ADDRESS>           Override DNS resolution for specific domain to a custom IP
       --interface <NAME>                 Bind to a network interface or local IP address
   -4, --ipv4                             Resolve hostname to ipv4 addresses only
