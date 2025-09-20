@@ -1,3 +1,9 @@
+## [0.25.0] - 2025-09-19
+### Features
+- Add `--unix-socket` for calling Unix Domain Sockets, see #427 (@ducaale)
+- Support binding to interface name on macOS, see #421 (@ducaale)
+- Add experimental HTTP/3 support, see #425 (@ducaale)
+
 ## [0.24.1] - 2025-05-02
 ### Features
 - Support RFC 5987 encoding for Content-Disposition filenames, see #416 (@zuisong)

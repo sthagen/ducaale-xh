@@ -223,7 +223,7 @@ Example: --print=Hb"
     #[clap(long, value_name = "FILE")]
     pub session: Option<OsString>,
 
-    /// Create or read a session without updating it form the request/response exchange.
+    /// Create or read a session without updating it from the request/response exchange.
     #[clap(long, value_name = "FILE", conflicts_with = "session")]
     pub session_read_only: Option<OsString>,
 
@@ -358,6 +358,12 @@ Example: --print=Hb"
     #[clap(short = '6', long)]
     pub ipv6: bool,
 
+    /// Connect using a Unix domain socket.
+    ///
+    /// Example: xh :/index.html --unix-socket=/var/run/temp.sock
+    #[clap(long, value_name = "FILE")]
+    pub unix_socket: Option<PathBuf>,
+
     /// Do not attempt to read stdin.
     ///
     /// This disables the default behaviour of reading the request body from stdin
@@ -456,8 +462,7 @@ Example: xh --generate=complete-bash > xh.bash",
     ///
     /// A backslash can be used to escape special characters, e.g. "weird\:key=value".
     ///
-    /// To construct a complex JSON object, the REQUEST_ITEM's key can be set to a JSON path instead of a field name.
-    /// For more information on this syntax, refer to https://httpie.io/docs/cli/nested-json.
+    /// To construct a complex JSON object, the REQUEST_ITEM's key can be set to a JSON path instead of a field name. For more information on this syntax, refer to https://httpie.io/docs/cli/nested-json.
     #[clap(value_name = "REQUEST_ITEM", verbatim_doc_comment)]
     raw_rest_args: Vec<String>,
 
@@ -1216,7 +1221,7 @@ pub enum Generate {
 /// BE instead.
 fn parse_encoding(encoding: &str) -> anyhow::Result<&'static Encoding> {
     let normalized_encoding = encoding.to_lowercase().replace(
-        |c: char| (!c.is_alphanumeric() && c != '_' && c != '-' && c != ':'),
+        |c: char| !c.is_alphanumeric() && c != '_' && c != '-' && c != ':',
         "",
     );
 
