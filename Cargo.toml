@@ -1,9 +1,9 @@
 [package]
 name = "xh"
-version = "0.25.0"
+version = "0.25.3"
 authors = ["ducaale <sharaf.13@hotmail.com>"]
 edition = "2021"
-rust-version = "1.82.0"
+rust-version = "1.83.0"
 license = "MIT"
 description = "Friendly and fast tool for sending HTTP requests"
 documentation = "https://github.com/ducaale/xh"
@@ -16,20 +16,20 @@ exclude = ["assets/xhs", "assets/xhs.1.gz"]
 
 [dependencies]
 anyhow = "1.0.38"
-brotli = { version = "3.3.0", default-features = false, features = ["std"] }
+brotli = { version = "8", default-features = false, features = ["std"] }
 chardetng = "0.1.15"
 clap = { version = "4.4", features = ["derive", "wrap_help", "string"] }
 clap_complete = "4.4"
 clap_complete_nushell = "4.4"
 cookie_store = { version = "0.21.1", features = ["preserve_order"] }
 digest_auth = "0.3.0"
-dirs = "5.0"
+dirs = "6.0"
 encoding_rs = "0.8.28"
 encoding_rs_io = "0.1.7"
 flate2 = "1.0.22"
 # Add "tracing" feature to hyper once it stabilizes
 hyper = { version = "1.2", default-features = false }
-indicatif = "0.17"
+indicatif = "0.18"
 jsonxf = "1.1.0"
 memchr = "2.4.1"
 mime = "0.3.16"
@@ -65,7 +65,7 @@ sanitize-filename = "0.6.0"
 [dependencies.reqwest]
 version = "0.12.23"
 default-features = false
-features = ["json", "multipart", "blocking", "socks", "cookies", "http2", "macos-system-configuration"]
+features = ["json", "multipart", "blocking", "socks", "cookies", "http2", "system-proxy"]
 
 [dependencies.syntect]
 version = "5.1"
