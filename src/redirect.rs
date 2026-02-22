@@ -6,16 +6,27 @@ use reqwest::header::{
 };
 use reqwest::{Method, StatusCode, Url};
 
+#[cfg(feature = "message-signatures")]
+use crate::cli::MessageSignature;
 use crate::middleware::{Context, Middleware};
 use crate::utils::{clone_request, HeaderValueExt};
 
 pub struct RedirectFollower {
     max_redirects: usize,
+    #[cfg(feature = "message-signatures")]
+    message_signature: Option<MessageSignature>,
 }
 
 impl RedirectFollower {
-    pub fn new(max_redirects: usize) -> Self {
-        RedirectFollower { max_redirects }
+    pub fn new(
+        max_redirects: usize,
+        #[cfg(feature = "message-signatures")] message_signature: Option<MessageSignature>,
+    ) -> Self {
+        RedirectFollower {
+            max_redirects,
+            #[cfg(feature = "message-signatures")]
+            message_signature,
+        }
     }
 }
 
@@ -36,6 +47,22 @@ impl Middleware for RedirectFollower {
                 }
                 .into());
             }
+
+            #[cfg(feature = "message-signatures")]
+            if let Some(signature) = &self.message_signature {
+                if let Some((key_id, key_material)) = signature.key_pair() {
+                    let components = signature.flattened_components();
+                    let algorithm = signature.algorithm().map(Into::into);
+                    crate::message_signature::sign_request(
+                        &mut next_request,
+                        key_id,
+                        key_material,
+                        (!components.is_empty()).then_some(components.as_slice()),
+                        algorithm,
+                    )?;
+                }
+            }
+
             log::info!("Following redirect to {}", next_request.url());
             log::trace!("Remaining redirects: {remaining_redirects}");
             log::trace!("{next_request:#?}");
@@ -87,6 +114,7 @@ fn get_next_request(mut request: Request, response: &Response) -> Option<Request
             if is_cross_domain_redirect(&next_url, prev_url) {
                 remove_sensitive_headers(request.headers_mut());
             }
+            remove_signature_headers(request.headers_mut());
             remove_content_headers(request.headers_mut());
             *request.url_mut() = next_url;
             *request.body_mut() = None;
@@ -104,6 +132,7 @@ fn get_next_request(mut request: Request, response: &Response) -> Option<Request
             if is_cross_domain_redirect(&next_url, prev_url) {
                 remove_sensitive_headers(request.headers_mut());
             }
+            remove_signature_headers(request.headers_mut());
             *request.url_mut() = next_url;
             Some(request)
         }
@@ -134,4 +163,29 @@ fn remove_content_headers(headers: &mut HeaderMap) {
     headers.remove(CONTENT_ENCODING);
     headers.remove(CONTENT_TYPE);
     headers.remove(CONTENT_LENGTH);
+    headers.remove("content-digest");
+}
+
+fn remove_signature_headers(headers: &mut HeaderMap) {
+    log::debug!("Removing signature headers before redirect");
+    headers.remove("signature");
+    headers.remove("signature-input");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::HeaderValue;
+
+    #[test]
+    fn remove_content_headers_removes_content_digest() {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_LENGTH, HeaderValue::from_static("1"));
+        headers.insert("content-digest", HeaderValue::from_static("sha-256=:abc=:"));
+
+        remove_content_headers(&mut headers);
+
+        assert!(!headers.contains_key(CONTENT_LENGTH));
+        assert!(!headers.contains_key("content-digest"));
+    }
 }

@@ -3,7 +3,7 @@ name = "xh"
 version = "0.25.3"
 authors = ["ducaale <sharaf.13@hotmail.com>"]
 edition = "2021"
-rust-version = "1.83.0"
+rust-version = "1.85.0"
 license = "MIT"
 description = "Friendly and fast tool for sending HTTP requests"
 documentation = "https://github.com/ducaale/xh"
@@ -51,9 +51,13 @@ time = "0.3.16"
 humantime = "2.2.0"
 unicode-width = "0.1.9"
 url = "2.2.2"
-ruzstd = { version = "0.7", default-features = false, features = ["std"]}
+ruzstd = { version = "0.7", default-features = false, features = ["std"] }
 env_logger = { version = "0.11.3", default-features = false, features = ["color", "auto-color", "humantime"] }
 log = "0.4.21"
+base64 = "0.22.1"
+form_urlencoded = "1.0.1"
+httpsig-hyper = { version = "0.0.24", optional = true, default-features = false, features = ["blocking", "rsa-signature"] }
+sha2 = { version = "0.10", default-features = false }
 
 # Enable logging in transitive dependencies.
 # The rustls version number should be kept in sync with hyper/reqwest.
@@ -82,7 +86,6 @@ features = ["dump-create", "plist-load", "regex-onig", "yaml-load"]
 
 [dev-dependencies]
 assert_cmd = "2.0.8"
-form_urlencoded = "1.0.1"
 indoc = "2.0"
 rand = "0.8.3"
 predicates = "3.0"
@@ -97,6 +100,7 @@ default = ["online-tests", "rustls", "network-interface"]
 native-tls = ["reqwest/native-tls"]
 rustls = ["reqwest/rustls", "dep:rustls"]
 http3 = ["reqwest/http3"]
+message-signatures = ["dep:httpsig-hyper"]
 
 # To be used by platforms that don't support binding to interface via SO_BINDTODEVICE
 # Ideally, this would be auto-disabled on platforms that don't need it
