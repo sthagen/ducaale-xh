@@ -3,6 +3,8 @@ use std::{
     sync::{LazyLock, OnceLock},
 };
 
+use quick_xml::events::Event;
+use quick_xml::{Reader, Writer};
 use syntect::dumps::from_binary;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
@@ -21,6 +23,22 @@ pub fn get_json_formatter(indent_level: usize) -> jsonxf::Formatter {
     fmt.record_separator = String::from("\n\n");
     fmt.eager_record_separators = true;
     fmt
+}
+
+/// Pretty-print an XML document. Whitespace-only text nodes (typically existing
+/// indentation) are stripped so that already-formatted XML gets re-indented cleanly.
+pub fn format_xml(indent: usize, text: &str) -> io::Result<Vec<u8>> {
+    let mut reader = Reader::from_str(text);
+    let mut writer = Writer::new_with_indent(Vec::new(), b' ', indent);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Eof) => break,
+            Ok(Event::Text(ref e)) if e.iter().all(|b| b.is_ascii_whitespace()) => {}
+            Ok(event) => writer.write_event(event)?,
+            Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e)),
+        }
+    }
+    Ok(writer.into_inner())
 }
 
 /// Format a JSON value using serde. Unlike jsonxf this decodes escaped Unicode values.

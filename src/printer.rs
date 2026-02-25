@@ -18,7 +18,7 @@ use crate::{
     cli::{Pretty, Theme},
     decoder::{decompress, get_compression_type},
     formatting::serde_json_format,
-    formatting::{get_json_formatter, Highlighter},
+    formatting::{format_xml, get_json_formatter, Highlighter},
     middleware::ResponseExt,
     utils::{copy_largebuf, test_mode, BUFFER_SIZE},
 };
@@ -119,6 +119,8 @@ impl<'a, T: Read> BinaryGuard<'a, T> {
 pub struct Printer {
     format_json: bool,
     json_indent_level: usize,
+    format_xml: bool,
+    xml_indent_level: usize,
     sort_headers: bool,
     color: bool,
     theme: Theme,
@@ -137,6 +139,8 @@ impl Printer {
         Printer {
             format_json: format_options.json_format.unwrap_or(pretty.format()),
             json_indent_level: format_options.json_indent.unwrap_or(4),
+            format_xml: format_options.xml_format.unwrap_or(pretty.format()),
+            xml_indent_level: format_options.xml_indent.unwrap_or(2),
             sort_headers: format_options.headers_sort.unwrap_or(pretty.format()),
             color: pretty.color(),
             stream: stream.into(),
@@ -200,10 +204,34 @@ impl Printer {
         }
     }
 
+    fn print_xml_text(&mut self, body: &str) -> io::Result<()> {
+        if !self.format_xml {
+            return self.print_syntax_text(body, "xml");
+        }
+
+        let mut buf = match format_xml(self.xml_indent_level, body) {
+            Ok(buf) => buf,
+            Err(err) => {
+                log::debug!("Failed to format XML: {err}");
+                return self.print_syntax_text(body, "xml");
+            }
+        };
+        buf.extend_from_slice(b"\n\n");
+
+        if self.color {
+            let text = String::from_utf8_lossy(&buf);
+            self.print_colorized_text(&text, "xml")
+        } else {
+            self.buffer.write_all(&buf)?;
+            self.buffer.flush()?;
+            Ok(())
+        }
+    }
+
     fn print_body_text(&mut self, content_type: ContentType, body: &str) -> io::Result<()> {
         match content_type {
             ContentType::Json => self.print_json_text(body, true),
-            ContentType::Xml => self.print_syntax_text(body, "xml"),
+            ContentType::Xml => self.print_xml_text(body),
             ContentType::Html => self.print_syntax_text(body, "html"),
             ContentType::Css => self.print_syntax_text(body, "css"),
             // In HTTPie part of this behavior is gated behind the --json flag
@@ -424,7 +452,7 @@ impl Printer {
         let stream = self.stream.unwrap_or(content_type.is_stream());
 
         if !self.buffer.is_terminal() {
-            if (self.color || self.format_json) && content_type.is_text() {
+            if (self.color || self.format_json || self.format_xml) && content_type.is_text() {
                 // The user explicitly asked for formatting even though this is
                 // going into a file, and the response is at least supposed to be
                 // text, so decode it
@@ -551,10 +579,10 @@ impl From<&str> for ContentType {
     fn from(content_type: &str) -> Self {
         if content_type.contains("json") {
             ContentType::Json
-        } else if content_type.contains("html") {
-            ContentType::Html
         } else if content_type.contains("xml") {
             ContentType::Xml
+        } else if content_type.contains("html") {
+            ContentType::Html
         } else if content_type.contains("multipart") {
             ContentType::Multipart
         } else if content_type.contains("x-www-form-urlencoded") {

@@ -105,9 +105,11 @@ Set output formatting options. Supported option are:
 
     json.indent:<NUM>
     json.format:<true|false>
+    xml.indent:<NUM>
+    xml.format:<true|false>
     headers.sort:<true|false>
 
-Example: --format-options=json.indent:2,headers.sort:false"
+Example: --format-options=json.indent:2,xml.indent:2,headers.sort:false"
     )]
     pub format_options: Vec<FormatOptions>,
 
@@ -980,6 +982,8 @@ impl Pretty {
 pub struct FormatOptions {
     pub json_indent: Option<usize>,
     pub json_format: Option<bool>,
+    pub xml_indent: Option<usize>,
+    pub xml_format: Option<bool>,
     pub headers_sort: Option<bool>,
 }
 
@@ -987,6 +991,8 @@ impl FormatOptions {
     pub fn merge(mut self, other: &Self) -> Self {
         self.json_indent = other.json_indent.or(self.json_indent);
         self.json_format = other.json_format.or(self.json_format);
+        self.xml_indent = other.xml_indent.or(self.xml_indent);
+        self.xml_format = other.xml_format.or(self.xml_format);
         self.headers_sort = other.headers_sort.or(self.headers_sort);
         self
     }
@@ -1014,7 +1020,13 @@ impl FromStr for FormatOptions {
                 "headers.sort" => {
                     format_options.headers_sort = Some(value.parse().with_context(value_error)?);
                 }
-                "json.sort_keys" | "xml.format" | "xml.indent" => {
+                "xml.indent" => {
+                    format_options.xml_indent = Some(value.parse().with_context(value_error)?);
+                }
+                "xml.format" => {
+                    format_options.xml_format = Some(value.parse().with_context(value_error)?);
+                }
+                "json.sort_keys" => {
                     return Err(anyhow!("Unsupported option '{key}'"));
                 }
                 _ => {
@@ -1803,7 +1815,7 @@ mod tests {
             "json.format:ffalse",
             // unsupported options
             "json.sort_keys:true",
-            "xml.format:false",
+            // invalid xml option values
             "xml.indent:false",
             // invalid options
             "toml.format:true",
@@ -1817,6 +1829,9 @@ mod tests {
             "json.indent:8,json.format:true,headers.sort:false,JSON.FORMAT:TRUE"
         )
         .is_ok());
+
+        assert!(FormatOptions::from_str("xml.format:true,xml.indent:4").is_ok());
+        assert!(FormatOptions::from_str("xml.format:false").is_ok());
     }
 
     #[test]
@@ -1828,8 +1843,10 @@ mod tests {
             format_option_one.merge(&format_option_two),
             FormatOptions {
                 json_indent: Some(2),
+                json_format: None,
+                xml_indent: None,
+                xml_format: None,
                 headers_sort: Some(false),
-                json_format: None
             }
         )
     }
