@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use brotli::Decompressor as BrotliDecoder;
 use flate2::read::{GzDecoder, ZlibDecoder};
-use reqwest::header::{HeaderMap, CONTENT_ENCODING, CONTENT_LENGTH, TRANSFER_ENCODING};
+use reqwest::header::{CONTENT_ENCODING, CONTENT_LENGTH, HeaderMap, TRANSFER_ENCODING};
 use ruzstd::{FrameDecoder, StreamingDecoder as ZstdDecoder};
 
 #[derive(Debug, Clone, Copy)]
@@ -250,9 +250,10 @@ mod tests {
         match reader.read_to_end(&mut buffer) {
             Ok(_) => unreachable!("gzip should fail to decompress an uncompressed data"),
             Err(e) => {
-                assert!(e
-                    .to_string()
-                    .starts_with("error decoding gzip response body"))
+                assert!(
+                    e.to_string()
+                        .starts_with("error decoding gzip response body")
+                )
             }
         }
     }

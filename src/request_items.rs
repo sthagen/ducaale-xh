@@ -7,9 +7,9 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::{blocking::multipart, Method};
+use reqwest::{Method, blocking::multipart};
 
 use crate::cli::BodyType;
 use crate::nested_json;

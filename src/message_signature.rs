@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
-use anyhow::{anyhow, bail, Context, Result};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use anyhow::{Context, Result, anyhow, bail};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use httpsig_hyper::prelude::{
-    message_component::{HttpMessageComponentId, HttpMessageComponentName},
     AlgorithmName, HttpSigResult, HttpSignatureParams, SecretKey, SharedKey, SigningKey,
+    message_component::{HttpMessageComponentId, HttpMessageComponentName},
 };
 use hyper::http;
 use reqwest::blocking::{Body as ReqwestBody, Request};

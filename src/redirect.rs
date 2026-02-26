@@ -1,7 +1,7 @@
 use anyhow::Result;
 use reqwest::blocking::{Request, Response};
 use reqwest::header::{
-    HeaderMap, AUTHORIZATION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, LOCATION,
+    AUTHORIZATION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, HeaderMap, LOCATION,
     PROXY_AUTHORIZATION, TRANSFER_ENCODING, WWW_AUTHENTICATE,
 };
 use reqwest::{Method, StatusCode, Url};
@@ -9,7 +9,7 @@ use reqwest::{Method, StatusCode, Url};
 #[cfg(feature = "message-signatures")]
 use crate::cli::MessageSignature;
 use crate::middleware::{Context, Middleware};
-use crate::utils::{clone_request, HeaderValueExt};
+use crate::utils::{HeaderValueExt, clone_request};
 
 pub struct RedirectFollower {
     max_redirects: usize,

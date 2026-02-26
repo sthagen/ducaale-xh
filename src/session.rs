@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 use url::Url;

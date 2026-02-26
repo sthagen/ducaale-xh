@@ -56,7 +56,7 @@ impl<'a, 'b> Context<'a, 'b> {
                 });
                 Ok(response)
             }
-            [ref mut head, tail @ ..] => head.handle(
+            [head, tail @ ..] => head.handle(
                 #[allow(clippy::needless_option_as_deref)]
                 Context::new(self.client, self.printer.as_deref_mut(), tail),
                 request,

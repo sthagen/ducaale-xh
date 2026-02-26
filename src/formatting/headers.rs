@@ -1,8 +1,8 @@
 use std::io::Result;
 
 use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue},
     Method, StatusCode, Version,
+    header::{HeaderMap, HeaderName, HeaderValue},
 };
 use syntect::highlighting::Theme;
 use termcolor::WriteColor;

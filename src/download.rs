@@ -5,15 +5,15 @@ use std::time::Instant;
 
 use crate::content_disposition;
 use crate::decoder::{decompress, get_compression_type};
-use crate::utils::{copy_largebuf, test_pretend_term, HeaderValueExt};
-use anyhow::{anyhow, Context, Result};
+use crate::utils::{HeaderValueExt, copy_largebuf, test_pretend_term};
+use anyhow::{Context, Result, anyhow};
 use indicatif::{HumanBytes, ProgressBar, ProgressStyle};
 use mime2ext::mime2ext;
 use regex_lite::Regex;
 use reqwest::{
-    blocking::Response,
-    header::{HeaderMap, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE},
     StatusCode,
+    blocking::Response,
+    header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, HeaderMap},
 };
 
 fn get_content_length(headers: &HeaderMap) -> Option<u64> {

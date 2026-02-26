@@ -1,7 +1,7 @@
 use crate::{get_command, server};
 use base64::engine::general_purpose::STANDARD;
-use httpsig_hyper::prelude::*;
 use httpsig_hyper::HyperSigError;
+use httpsig_hyper::prelude::*;
 
 const KEY_MATERIAL: &str = "secret-key-material";
 const RSA_KEY_FIXTURE: &str = "tests/fixtures/keys/rsa_private_key_pkcs8.pem";
@@ -528,10 +528,12 @@ fn message_signature_with_basic_auth() {
 
             assert!(req.headers().contains_key("Authorization"));
             assert!(req.headers().contains_key("Signature"));
-            assert!(req.headers()["Authorization"]
-                .to_str()
-                .unwrap()
-                .starts_with("Basic "));
+            assert!(
+                req.headers()["Authorization"]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("Basic ")
+            );
 
             // Verify the signature
             use base64::Engine;

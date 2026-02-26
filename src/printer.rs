@@ -7,7 +7,7 @@ use encoding_rs_io::DecodeReaderBytesBuilder;
 use mime::Mime;
 use reqwest::blocking::{Body, Request, Response};
 use reqwest::cookie::CookieStore;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, HOST};
+use reqwest::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, HOST, HeaderMap, HeaderValue};
 use url::Url;
 
 use crate::formatting::headers::HeaderFormatter;
@@ -18,9 +18,9 @@ use crate::{
     cli::{Pretty, Theme},
     decoder::{decompress, get_compression_type},
     formatting::serde_json_format,
-    formatting::{format_xml, get_json_formatter, Highlighter},
+    formatting::{Highlighter, format_xml, get_json_formatter},
     middleware::ResponseExt,
-    utils::{copy_largebuf, test_mode, BUFFER_SIZE},
+    utils::{BUFFER_SIZE, copy_largebuf, test_mode},
 };
 
 const BINARY_SUPPRESSOR: &str = concat!(

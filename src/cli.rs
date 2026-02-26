@@ -10,13 +10,13 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context};
-use clap::builder::styling::{AnsiColor, Effects};
+use anyhow::{Context, anyhow};
 use clap::builder::Styles;
+use clap::builder::styling::{AnsiColor, Effects};
 use clap::{self, ArgAction, FromArgMatches, ValueEnum};
 use encoding_rs::Encoding;
 use regex_lite::Regex;
-use reqwest::{tls, Method, Url};
+use reqwest::{Method, Url, tls};
 use serde::Deserialize;
 
 use crate::buffer::Buffer;
@@ -1825,10 +1825,12 @@ mod tests {
             assert!(FormatOptions::from_str(format_option).is_err());
         }
 
-        assert!(FormatOptions::from_str(
-            "json.indent:8,json.format:true,headers.sort:false,JSON.FORMAT:TRUE"
-        )
-        .is_ok());
+        assert!(
+            FormatOptions::from_str(
+                "json.indent:8,json.format:true,headers.sort:false,JSON.FORMAT:TRUE"
+            )
+            .is_ok()
+        );
 
         assert!(FormatOptions::from_str("xml.format:true,xml.indent:4").is_ok());
         assert!(FormatOptions::from_str("xml.format:false").is_ok());

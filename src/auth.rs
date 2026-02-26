@@ -2,9 +2,9 @@ use std::io;
 
 use anyhow::Result;
 use regex_lite::Regex;
-use reqwest::blocking::{Request, Response};
-use reqwest::header::{HeaderValue, AUTHORIZATION, WWW_AUTHENTICATE};
 use reqwest::StatusCode;
+use reqwest::blocking::{Request, Response};
+use reqwest::header::{AUTHORIZATION, HeaderValue, WWW_AUTHENTICATE};
 
 use crate::cli::AuthType;
 use crate::middleware::{Context, Middleware};

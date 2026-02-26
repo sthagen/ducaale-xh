@@ -18,9 +18,9 @@
 
 use std::{fmt, mem};
 
-use anyhow::{anyhow, Result};
-use serde_json::map::Map;
+use anyhow::{Result, anyhow};
 use serde_json::Value;
+use serde_json::map::Map;
 
 use crate::utils::unescape;
 
@@ -115,12 +115,12 @@ pub fn parse_path(json_path: &str) -> Result<Vec<PathAction>> {
             }
             Some(RightBracket(end)) => path.push(Append((start, end + 1))),
             Some(Text(..) | LeftBracket(..)) | None => {
-                return Err(syntax_error("number or ']'", start + 1, json_path))
+                return Err(syntax_error("number or ']'", start + 1, json_path));
             }
         },
         Some(Text(key, span)) => path.push(Key(key, span)),
         Some(Number(..) | RightBracket(..)) | None => {
-            return Err(syntax_error("text or '['", 0, json_path))
+            return Err(syntax_error("text or '['", 0, json_path));
         }
     }
 
@@ -149,7 +149,7 @@ pub fn parse_path(json_path: &str) -> Result<Vec<PathAction>> {
             }
             Some(RightBracket(end)) => path.push(Append((start, end + 1))),
             Some(LeftBracket(..)) | None => {
-                return Err(syntax_error("text, number or ']'", start + 1, json_path))
+                return Err(syntax_error("text, number or ']'", start + 1, json_path));
             }
         }
     }
@@ -172,7 +172,7 @@ pub fn insert(
                     return Err(Box::new(TypeError::new(
                         Value::Object(obj),
                         path_component.clone(),
-                    )))
+                    )));
                 }
             };
             if path.len() == 1 {
@@ -190,7 +190,7 @@ pub fn insert(
                     return Err(Box::new(TypeError::new(
                         Value::Array(arr),
                         path_component.clone(),
-                    )))
+                    )));
                 }
                 PathAction::Index(v, ..) => *v,
                 PathAction::Append(..) => arr.len(),

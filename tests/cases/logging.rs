@@ -54,9 +54,11 @@ fn backtrace_is_not_printed_outside_debug_mode() {
         .env_remove("RUST_LIB_BACKTRACE")
         .assert()
         .failure();
-    assert!(!std::str::from_utf8(&cmd.get_output().stderr)
-        .unwrap()
-        .contains("Stack backtrace:"));
+    assert!(
+        !std::str::from_utf8(&cmd.get_output().stderr)
+            .unwrap()
+            .contains("Stack backtrace:")
+    );
 }
 
 #[test]
@@ -140,7 +142,9 @@ fn rustls_emits_logs() {
         .assert()
         .failure();
 
-    assert!(std::str::from_utf8(&cmd.get_output().stderr)
-        .unwrap()
-        .contains("rustls::"));
+    assert!(
+        std::str::from_utf8(&cmd.get_output().stderr)
+            .unwrap()
+            .contains("rustls::")
+    );
 }

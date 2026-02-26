@@ -20,7 +20,7 @@ use predicates::function::function;
 use predicates::str::contains;
 use reqwest::header::HeaderValue;
 use serde_json::Value;
-use tempfile::{tempdir, NamedTempFile, TempDir};
+use tempfile::{NamedTempFile, TempDir, tempdir};
 
 pub trait RequestExt {
     fn query_params(&self) -> HashMap<String, String>;
@@ -128,14 +128,14 @@ const BINARY_SUPPRESSOR: &str = concat!(
 
 #[allow(unused)]
 mod prelude {
+    pub(crate) use super::BINARY_SUPPRESSOR;
+    pub(crate) use super::RequestExt;
     pub(crate) use super::color_command;
     pub(crate) use super::get_base_command;
     pub(crate) use super::get_command;
     pub(crate) use super::random_string;
     pub(crate) use super::redirecting_command;
     pub(crate) use super::server;
-    pub(crate) use super::RequestExt;
-    pub(crate) use super::BINARY_SUPPRESSOR;
 }
 
 #[test]

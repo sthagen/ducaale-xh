@@ -30,14 +30,14 @@ use std::process::ExitCode;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use cookie_store::{CookieStore, RawCookie};
 use flate2::write::ZlibEncoder;
 use hyper::header::CONTENT_ENCODING;
 use redirect::RedirectFollower;
 use reqwest::blocking::{Body as ReqwestBody, Client};
 use reqwest::header::{
-    HeaderValue, ACCEPT, ACCEPT_ENCODING, CONNECTION, CONTENT_TYPE, COOKIE, RANGE, USER_AGENT,
+    ACCEPT, ACCEPT_ENCODING, CONNECTION, CONTENT_TYPE, COOKIE, HeaderValue, RANGE, USER_AGENT,
 };
 use reqwest::tls;
 use url::Host;
@@ -164,13 +164,17 @@ fn run(args: Cli) -> Result<ExitCode> {
 
         #[cfg(feature = "native-tls")]
         if !args.native_tls && tls_version < tls::Version::TLS_1_2 {
-            log::warn!("rustls does not support older TLS versions. native-tls will be enabled. Use --native-tls to silence this warning.");
+            log::warn!(
+                "rustls does not support older TLS versions. native-tls will be enabled. Use --native-tls to silence this warning."
+            );
             client = client.use_native_tls();
         }
 
         #[cfg(not(feature = "native-tls"))]
         if tls_version < tls::Version::TLS_1_2 {
-            log::warn!("rustls does not support older TLS versions. Consider building with the `native-tls` feature enabled.");
+            log::warn!(
+                "rustls does not support older TLS versions. Consider building with the `native-tls` feature enabled."
+            );
         }
     }
 
@@ -266,7 +270,9 @@ fn run(args: Cli) -> Result<ExitCode> {
     if args.cert.is_some() {
         // Unlike the --verify case this is advertised to not work, so it's
         // not an outright bug, but it's still imaginable that it'll start working
-        log::warn!("Client certificates are not supported for native-tls and this binary was built without rustls support");
+        log::warn!(
+            "Client certificates are not supported for native-tls and this binary was built without rustls support"
+        );
     }
 
     for proxy in args.proxy.into_iter().rev() {
@@ -561,7 +567,9 @@ fn run(args: Cli) -> Result<ExitCode> {
         if args.compress >= 1 {
             if request.headers().contains_key(CONTENT_ENCODING) {
                 // HTTPie overrides the original Content-Encoding header in this case
-                log::warn!("--compress can't be used with a 'Content-Encoding:' header. --compress will be disabled.");
+                log::warn!(
+                    "--compress can't be used with a 'Content-Encoding:' header. --compress will be disabled."
+                );
             } else if let Some(body) = request.body_mut() {
                 // TODO: Compress file body (File) without buffering
                 let body_bytes = body.buffer()?;

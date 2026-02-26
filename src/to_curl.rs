@@ -1,13 +1,13 @@
-use std::io::{stderr, stdout, Write};
+use std::io::{Write, stderr, stdout};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use os_display::Quotable;
-use reqwest::{tls, Method};
+use reqwest::{Method, tls};
 use std::ffi::OsString;
 
 use crate::cli::{AuthType, Cli, HttpVersion, Verify};
-use crate::request_items::{Body, RequestItem, FORM_CONTENT_TYPE, JSON_ACCEPT, JSON_CONTENT_TYPE};
-use crate::utils::{url_with_query, HeaderValueExt};
+use crate::request_items::{Body, FORM_CONTENT_TYPE, JSON_ACCEPT, JSON_CONTENT_TYPE, RequestItem};
+use crate::utils::{HeaderValueExt, url_with_query};
 
 pub fn print_curl_translation(args: Cli) -> Result<()> {
     let cmd = translate(args)?;
@@ -572,8 +572,8 @@ mod tests {
             ),
             (
                 "xh https://exmaple.com/ hello:你好",
-                "curl https://exmaple.com/ -H 'hello: 你好'"
-            )
+                "curl https://exmaple.com/ -H 'hello: 你好'",
+            ),
         ];
         for (input, output) in expected {
             let cli = Cli::try_parse_from(input.split_whitespace()).unwrap();

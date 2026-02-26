@@ -22,8 +22,8 @@ pub(crate) fn additional_messages(err: &anyhow::Error, native_tls: bool) -> Vec<
 #[cfg(feature = "rustls")]
 fn format_rustls_error(err: &anyhow::Error) -> Option<String> {
     use humantime::format_duration;
-    use rustls::pki_types::UnixTime;
     use rustls::CertificateError;
+    use rustls::pki_types::UnixTime;
     use time::OffsetDateTime;
 
     // Multiple layers of io::Error for some reason?

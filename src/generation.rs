@@ -53,7 +53,7 @@ complete -c {bin_name} -n 'string match -qr "@" -- (commandline -ct)' -kxa "(__{
 }
 
 fn generate_manpages(app: &mut clap::Command) {
-    use roff::{bold, italic, roman, Roff};
+    use roff::{Roff, bold, italic, roman};
     use time::OffsetDateTime as DateTime;
 
     let items: Vec<_> = app.get_arguments().filter(|i| !i.is_hide_set()).collect();
