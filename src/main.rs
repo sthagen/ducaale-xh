@@ -8,7 +8,7 @@ mod download;
 mod error_reporting;
 mod formatting;
 mod generation;
-#[cfg(feature = "message-signatures")]
+#[cfg(feature = "http-message-signatures")]
 mod message_signature;
 mod middleware;
 mod nested_json;
@@ -589,25 +589,25 @@ fn run(args: Cli) -> Result<ExitCode> {
             request.headers_mut().remove(header);
         }
 
-        #[cfg(not(feature = "message-signatures"))]
+        #[cfg(not(feature = "http-message-signatures"))]
         if args.m_sig.m_sig_id.is_some()
             || args.m_sig.m_sig_key.is_some()
             || args.m_sig.m_sig_alg.is_some()
             || args.m_sig.has_components()
         {
             return Err(anyhow!(
-                "This binary was built without message signature support. Enable the `message-signatures` feature."
+                "This binary was built without message signature support. Enable the `http-message-signatures` feature."
             ));
         }
 
-        #[cfg(feature = "message-signatures")]
+        #[cfg(feature = "http-message-signatures")]
         if args.m_sig.has_components() && !args.m_sig.has_key_pair() {
             return Err(anyhow!(
                 "Message signature components require both --unstable-m-sig-id and --unstable-m-sig-key."
             ));
         }
 
-        #[cfg(feature = "message-signatures")]
+        #[cfg(feature = "http-message-signatures")]
         if let Some((key_id, key_material)) = args.m_sig.key_pair() {
             let m_sig_components = args.m_sig.flattened_components();
             let m_sig_algorithm = args.m_sig.algorithm().map(Into::into);
@@ -699,7 +699,7 @@ fn run(args: Cli) -> Result<ExitCode> {
                 });
             }
             if args.follow {
-                #[cfg(feature = "message-signatures")]
+                #[cfg(feature = "http-message-signatures")]
                 {
                     let message_signature = args.m_sig.has_key_pair().then_some(args.m_sig.clone());
 
@@ -708,7 +708,7 @@ fn run(args: Cli) -> Result<ExitCode> {
                         message_signature,
                     ));
                 }
-                #[cfg(not(feature = "message-signatures"))]
+                #[cfg(not(feature = "http-message-signatures"))]
                 {
                     client = client.with(RedirectFollower::new(args.max_redirects.unwrap_or(10)));
                 }
@@ -799,8 +799,6 @@ fn setup_backtraces() {
     }
 
     // SAFETY: No other threads are running at this time.
-    // (Will become unsafe in the 2024 edition.)
-    #[allow(unused_unsafe)]
     unsafe {
         std::env::set_var("RUST_BACKTRACE", "1");
     }

@@ -1,3 +1,11 @@
+## Unreleased
+### Features
+- Pretty-print XML responses, see #450 (@o1x3)
+- Add experimental HTTP message signatures (RFC 9421) support, see #448 (@zuisong)
+
+### Other
+- Upgrade to reqwest v0.13, see #441 (@ducaale)
+
 ## [0.25.3] - 2025-12-16
 ### Features
 - Add colors to `--help`/`-h`, see #432 (@starsep)

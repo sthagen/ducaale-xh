@@ -815,14 +815,20 @@ pub struct MessageSignature {
     #[arg(
         long = "unstable-m-sig-id",
         value_name = "KEY_ID",
-        requires = "m_sig_key"
+        requires = "m_sig_key",
+        hide = cfg!(not(feature = "http-message-signatures"))
     )]
     pub m_sig_id: Option<String>,
 
     /// Message signature key material (RFC 9421).
     ///
     /// Can be a raw string or a file path starting with @.
-    #[arg(long = "unstable-m-sig-key", value_name = "KEY", requires = "m_sig_id")]
+    #[arg(
+        long = "unstable-m-sig-key",
+        value_name = "KEY",
+        requires = "m_sig_id",
+        hide = cfg!(not(feature = "http-message-signatures"))
+    )]
     pub m_sig_key: Option<String>,
 
     /// Message signature algorithm (RFC 9421).
@@ -833,7 +839,8 @@ pub struct MessageSignature {
         long = "unstable-m-sig-alg",
         value_name = "ALG",
         hide_possible_values = true,
-        requires = "m_sig_key"
+        requires = "m_sig_key",
+        hide = cfg!(not(feature = "http-message-signatures"))
     )]
     pub m_sig_alg: Option<MessageSignatureAlgorithm>,
 
@@ -845,7 +852,11 @@ pub struct MessageSignature {
     /// "content-digest" is included if there's a body.
     ///
     /// Example: "@method,@path,content-digest"
-    #[arg(long = "unstable-m-sig-comp", value_name = "COMPONENTS")]
+    #[arg(
+        long = "unstable-m-sig-comp",
+        value_name = "COMPONENTS",
+        hide = cfg!(not(feature = "http-message-signatures"))
+    )]
     pub m_sig_comp: Vec<MessageSignatureComponents>,
 }
 
@@ -869,6 +880,7 @@ impl MessageSignature {
             .any(|components| !components.0.is_empty())
     }
 
+    #[cfg(feature = "http-message-signatures")]
     pub fn flattened_components(&self) -> Vec<String> {
         self.m_sig_comp
             .iter()
@@ -915,7 +927,7 @@ pub enum MessageSignatureAlgorithm {
     RsaPssSha512,
 }
 
-#[cfg(feature = "message-signatures")]
+#[cfg(feature = "http-message-signatures")]
 impl From<MessageSignatureAlgorithm> for httpsig_hyper::prelude::AlgorithmName {
     fn from(value: MessageSignatureAlgorithm) -> Self {
         match value {

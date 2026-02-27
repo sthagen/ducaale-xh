@@ -6,25 +6,25 @@ use reqwest::header::{
 };
 use reqwest::{Method, StatusCode, Url};
 
-#[cfg(feature = "message-signatures")]
+#[cfg(feature = "http-message-signatures")]
 use crate::cli::MessageSignature;
 use crate::middleware::{Context, Middleware};
 use crate::utils::{HeaderValueExt, clone_request};
 
 pub struct RedirectFollower {
     max_redirects: usize,
-    #[cfg(feature = "message-signatures")]
+    #[cfg(feature = "http-message-signatures")]
     message_signature: Option<MessageSignature>,
 }
 
 impl RedirectFollower {
     pub fn new(
         max_redirects: usize,
-        #[cfg(feature = "message-signatures")] message_signature: Option<MessageSignature>,
+        #[cfg(feature = "http-message-signatures")] message_signature: Option<MessageSignature>,
     ) -> Self {
         RedirectFollower {
             max_redirects,
-            #[cfg(feature = "message-signatures")]
+            #[cfg(feature = "http-message-signatures")]
             message_signature,
         }
     }
@@ -48,7 +48,7 @@ impl Middleware for RedirectFollower {
                 .into());
             }
 
-            #[cfg(feature = "message-signatures")]
+            #[cfg(feature = "http-message-signatures")]
             if let Some(signature) = &self.message_signature {
                 if let Some((key_id, key_material)) = signature.key_pair() {
                     let components = signature.flattened_components();

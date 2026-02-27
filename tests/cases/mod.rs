@@ -1,4 +1,4 @@
-#[cfg(feature = "message-signatures")]
+#[cfg(feature = "http-message-signatures")]
 mod auth_message_signature;
 mod compress_request_body;
 mod download;
